@@ -14,10 +14,9 @@ export const getAllEmployees = async (req, res) => {
       employees,
     });
   } catch (error) {
-    console.error("getAllEmployees error:", error);
     return res.status(500).json({
       success: false,
-      message: "Internal server error",
+      message: "Failed to fetch employees. Please try again.",
     });
   }
 };
@@ -67,10 +66,9 @@ export const approveEmployee = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("approveEmployee error:", error);
     return res.status(500).json({
       success: false,
-      message: "Internal server error",
+      message: "Failed to approve employee. Please try again.",
     });
   }
 };
@@ -100,10 +98,9 @@ export const deleteEmployee = async (req, res) => {
       message: "Employee deleted successfully",
     });
   } catch (error) {
-    console.error("deleteEmployee error:", error);
     return res.status(500).json({
       success: false,
-      message: "Internal server error",
+      message: "Failed to delete employee. Please try again.",
     });
   }
 };

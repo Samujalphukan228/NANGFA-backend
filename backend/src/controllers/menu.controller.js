@@ -45,11 +45,11 @@ export const addMenu = async (req, res) => {
       menu,
     });
   } catch (error) {
-    console.error("addMenu error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ 
+      message: "Failed to add menu item. Please try again." 
+    });
   }
 };
-
 
 export const getAllMenus = async (req, res) => {
   try {
@@ -60,13 +60,12 @@ export const getAllMenus = async (req, res) => {
       menus,
     });
   } catch (error) {
-    console.error("getAllMenus error:", error);
-    return res
-      .status(500)
-      .json({ success: false, message: "Internal server error" });
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to fetch menu items. Please try again." 
+    });
   }
 };
-
 
 export const updateMenu = async (req, res) => {
   try {
@@ -75,7 +74,10 @@ export const updateMenu = async (req, res) => {
 
     const menu = await menuModel.findById(id);
     if (!menu) {
-      return res.status(404).json({ success: false, message: "Menu not found" });
+      return res.status(404).json({ 
+        success: false, 
+        message: "Menu not found" 
+      });
     }
 
     // Handle single image upload
@@ -112,11 +114,12 @@ export const updateMenu = async (req, res) => {
       menu,
     });
   } catch (error) {
-    console.error("updateMenu error:", error);
-    return res.status(500).json({ success: false, message: "Internal server error" });
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to update menu item. Please try again." 
+    });
   }
 };
-
 
 export const deleteMenu = async (req, res) => {
   try {
@@ -124,7 +127,10 @@ export const deleteMenu = async (req, res) => {
     const menu = await menuModel.findById(id);
 
     if (!menu) {
-      return res.status(404).json({ success: false, message: "Menu not found" });
+      return res.status(404).json({ 
+        success: false, 
+        message: "Menu not found" 
+      });
     }
 
     // Delete image from Cloudinary
@@ -144,7 +150,9 @@ export const deleteMenu = async (req, res) => {
       message: "Menu deleted successfully",
     });
   } catch (error) {
-    console.error("deleteMenu error:", error);
-    return res.status(500).json({ success: false, message: "Internal server error" });
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to delete menu item. Please try again." 
+    });
   }
 };

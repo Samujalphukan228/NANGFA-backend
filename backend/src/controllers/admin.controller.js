@@ -6,7 +6,6 @@ import { generateOTP, sentOTP } from "../utils/mail.utils.js";
 import { hashPassword } from "../utils/hashPasword.utils.js";
 import { createToken } from "../utils/createToken.utils.js";
 
-
 export const RegisterAdmin = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -35,7 +34,7 @@ export const RegisterAdmin = async (req, res) => {
     const { success, hash, message } = await hashPassword(password);
 
     if (!success)
-      return res.status(500).json({ success: false, message: "Failed to hash password", details: message });
+      return res.status(500).json({ success: false, message: "Failed to hash password" });
 
     const admin = await adminModel.create({
       email: email.toLowerCase(),
@@ -53,10 +52,9 @@ export const RegisterAdmin = async (req, res) => {
         const unverified = await adminModel.findOne({ email });
         if (unverified && !unverified.isVerified) {
           await adminModel.deleteOne({ email });
-          console.log(`🗑️ Deleted unverified admin: ${email}`);
         }
       } catch (err) {
-        console.error("Cleanup error:", err.message);
+        // Silent cleanup failure
       }
     }, 10 * 60 * 1000);
 
@@ -65,11 +63,9 @@ export const RegisterAdmin = async (req, res) => {
       message: "OTP sent to your email address. Please verify to complete registration.",
     });
   } catch (error) {
-    console.error("RegisterAdmin error:", error);
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: "Registration failed. Please try again." });
   }
 };
-
 
 export const verifyAdminOTP = async (req, res) => {
   try {
@@ -102,11 +98,9 @@ export const verifyAdminOTP = async (req, res) => {
       message: "Admin verified successfully. You can now log in.",
     });
   } catch (error) {
-    console.error("verifyAdminOTP error:", error);
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: "Verification failed. Please try again." });
   }
 };
-
 
 export const loginAdmin = async (req, res) => {
   try {
@@ -141,11 +135,9 @@ export const loginAdmin = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("loginAdmin error:", error);
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: "Login failed. Please try again." });
   }
 };
-
 
 export const forgotAdminPassword = async (req, res) => {
   try {
@@ -182,11 +174,9 @@ export const forgotAdminPassword = async (req, res) => {
       message: "OTP sent to your email address. Please verify to reset your password.",
     });
   } catch (error) {
-    console.error("forgotAdminPassword error:", error);
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: "Request failed. Please try again." });
   }
 };
-
 
 export const resetAdminPassword = async (req, res) => {
   try {
@@ -210,7 +200,7 @@ export const resetAdminPassword = async (req, res) => {
 
     const hashed = await hashPassword(newPassword);
     if (!hashed.success)
-      return res.status(500).json({ success: false, message: "Failed to hash new password" });
+      return res.status(500).json({ success: false, message: "Failed to reset password" });
 
     admin.password = hashed.hash;
     admin.otp = undefined;
@@ -223,7 +213,6 @@ export const resetAdminPassword = async (req, res) => {
       message: "Password has been reset successfully. You can now log in.",
     });
   } catch (error) {
-    console.error("resetAdminPassword error:", error);
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: "Password reset failed. Please try again." });
   }
 };

@@ -9,9 +9,9 @@ const transporter = nodemailer.createTransport({
         pass: env.mailPass,
     },
     tls: {
-    rejectUnauthorized: false
+        rejectUnauthorized: false
     }
-})
+});
 
 const generateOTP = () => {
     return otpGenerator.generate(6, {
@@ -27,7 +27,7 @@ const sentOTP = async (email, otp, purpose) => {
         signup: "Verify Your Email - forEver",
         login: "Login Verification Code - forEver",
         reset: "Password Reset Code - forEver",
-    }
+    };
 
     try {
         await transporter.sendMail({
@@ -36,11 +36,9 @@ const sentOTP = async (email, otp, purpose) => {
             subject: subjects[purpose] || "Verification Code - forEver",
             text: `Your OTP for ${purpose} is: ${otp}\n\nThis code will expire in 10 minutes.\n\nIf you didn't request this, please ignore this email.\n\n- forEver Team`
         });
-        console.log(`✅ OTP sent to ${email}`);
     } catch (error) {
-        console.error("❌ Error sending email:", error);
         throw new Error("Failed to send OTP email");
     }
-}
+};
 
 export { generateOTP, sentOTP };

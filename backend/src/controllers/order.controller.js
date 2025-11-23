@@ -16,8 +16,6 @@ export const createOrder = async (req, res) => {
     let totalPrice = 0;
     
     for (const item of menuItems) {
-      console.log('🔍 Checking menu item:', item.menuId);
-      
       const menu = await menuModel.findById(item.menuId);
       
       if (!menu) {
@@ -42,29 +40,16 @@ export const createOrder = async (req, res) => {
       totalPrice,
       tableNumber: tableNumber || null,
       createdBy: req.admin._id,
-      status: 'preparing', // ✅ Make sure status is set
+      status: 'preparing',
     };
 
     const order = new orderModel(orderData);
     await order.save();
 
-    // ✅ Populate menu items
     await order.populate('menuItems.menuId', 'name price image category');
 
-    // ✅ GET SOCKET AND EMIT TO KITCHEN ROOM
     const io = req.app.get("io");
-    
-    // Emit to kitchen room specifically
     io.to('kitchen').emit("order:new", order);
-    
-    console.log('=================================');
-    console.log('📢 EMITTED order:new TO KITCHEN');
-    console.log('Order ID:', order._id);
-    console.log('Table:', tableNumber || 'Takeaway');
-    console.log('Items:', menuItems.length);
-    console.log('Total Price:', totalPrice);
-    console.log('Kitchen room size:', io.sockets.adapter.rooms.get('kitchen')?.size || 0);
-    console.log('=================================');
 
     return res.status(201).json({
       success: true,
@@ -72,11 +57,9 @@ export const createOrder = async (req, res) => {
       order,
     });
   } catch (error) {
-    console.error("❌ CREATE ORDER ERROR:", error);
     return res.status(500).json({ 
       success: false, 
-      message: "Internal server error",
-      error: error.message
+      message: "Failed to create order. Please try again."
     });
   }
 };
@@ -85,7 +68,6 @@ export const completeOrder = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Get the order to access totalPrice
     const order = await orderModel
       .findById(id)
       .populate('menuItems.menuId', 'name price image category');
@@ -97,17 +79,14 @@ export const completeOrder = async (req, res) => {
       });
     }
 
-    // Store totalPrice before updating
     const totalPrice = order.totalPrice;
 
-    // Update order status
     const updatedOrder = await orderModel.findByIdAndUpdate(
       id,
       { status: 'completed' },
       { new: true, runValidators: false }
     ).populate('menuItems.menuId', 'name price image category');
 
-    // Add to revenue (daily)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -122,17 +101,10 @@ export const completeOrder = async (req, res) => {
       { upsert: true, new: true }
     );
 
-    // ✅ EMIT TO ALL CLIENTS AND KITCHEN
     const io = req.app.get("io");
-    io.emit("order:completed", updatedOrder); // All clients
-    io.to('kitchen').emit("order:completed", updatedOrder); // Kitchen specifically
-    io.emit("revenue:update"); // Trigger revenue refresh
-
-    console.log('=================================');
-    console.log('✅ EMITTED order:completed');
-    console.log('Order ID:', updatedOrder._id);
-    console.log('Revenue added:', totalPrice);
-    console.log('=================================');
+    io.emit("order:completed", updatedOrder);
+    io.to('kitchen').emit("order:completed", updatedOrder);
+    io.emit("revenue:update");
 
     return res.status(200).json({
       success: true,
@@ -140,10 +112,9 @@ export const completeOrder = async (req, res) => {
       order: updatedOrder,
     });
   } catch (error) {
-    console.error("❌ completeOrder error:", error);
     return res.status(500).json({ 
       success: false, 
-      message: "Internal server error" 
+      message: "Failed to complete order. Please try again."
     });
   }
 };
@@ -162,7 +133,6 @@ export const updateOrder = async (req, res) => {
       });
     }
 
-    // Recalculate total price if menuItems changed
     let totalPrice = order.totalPrice;
 
     if (menuItems && menuItems.length > 0) {
@@ -189,7 +159,6 @@ export const updateOrder = async (req, res) => {
       }
     }
 
-    // Update order
     const updatedOrder = await orderModel.findByIdAndUpdate(
       id,
       {
@@ -201,16 +170,9 @@ export const updateOrder = async (req, res) => {
       { new: true, runValidators: false }
     ).populate('menuItems.menuId', 'name price image category');
 
-    // ✅ EMIT TO KITCHEN
     const io = req.app.get("io");
     io.to('kitchen').emit("order:update", updatedOrder);
-    io.emit("order:update", updatedOrder); // Also emit to all
-
-    console.log('=================================');
-    console.log('🔄 EMITTED order:update TO KITCHEN');
-    console.log('Order ID:', updatedOrder._id);
-    console.log('Status:', updatedOrder.status);
-    console.log('=================================');
+    io.emit("order:update", updatedOrder);
 
     return res.status(200).json({
       success: true,
@@ -218,10 +180,9 @@ export const updateOrder = async (req, res) => {
       order: updatedOrder,
     });
   } catch (error) {
-    console.error("❌ updateOrder error:", error);
     return res.status(500).json({ 
       success: false, 
-      message: "Internal server error" 
+      message: "Failed to update order. Please try again."
     });
   }
 };
@@ -229,11 +190,9 @@ export const updateOrder = async (req, res) => {
 export const getCurrentOrders = async (req, res) => {
   try {
     const orders = await orderModel
-      .find({ status: 'preparing' }) // ✅ Only get preparing orders for kitchen
+      .find({ status: 'preparing' })
       .populate('menuItems.menuId', 'name price image category')
-      .sort({ createdAt: -1 }); // ✅ Use createdAt instead of date
-
-    console.log('📦 getCurrentOrders - Found:', orders.length, 'preparing orders');
+      .sort({ createdAt: -1 });
 
     return res.status(200).json({
       success: true,
@@ -241,10 +200,9 @@ export const getCurrentOrders = async (req, res) => {
       orders,
     });
   } catch (error) {
-    console.error("❌ getCurrentOrders error:", error);
     return res.status(500).json({ 
       success: false, 
-      message: "Internal server error" 
+      message: "Failed to fetch orders. Please try again."
     });
   }
 };
@@ -269,10 +227,9 @@ export const getOrderById = async (req, res) => {
       order 
     });
   } catch (error) {
-    console.error("❌ getOrderById error:", error);
     return res.status(500).json({ 
       success: false, 
-      message: "Internal server error" 
+      message: "Failed to fetch order. Please try again."
     });
   }
 };
@@ -292,25 +249,18 @@ export const deleteOrder = async (req, res) => {
 
     await orderModel.findByIdAndDelete(id);
 
-    // ✅ EMIT TO KITCHEN AND ALL CLIENTS
     const io = req.app.get("io");
     io.to('kitchen').emit("order:delete", { id });
-    io.emit("order:delete", { id }); // Also emit to all
-
-    console.log('=================================');
-    console.log('🗑️ EMITTED order:delete TO KITCHEN');
-    console.log('Order ID:', id);
-    console.log('=================================');
+    io.emit("order:delete", { id });
 
     return res.status(200).json({
       success: true,
       message: "Order deleted successfully",
     });
   } catch (error) {
-    console.error("❌ deleteOrder error:", error);
     return res.status(500).json({ 
       success: false, 
-      message: "Internal server error" 
+      message: "Failed to delete order. Please try again."
     });
   }
 };
@@ -328,10 +278,9 @@ export const getTodayRevenue = async (req, res) => {
       orderCount: revenue ? revenue.orderCount : 0,
     });
   } catch (error) {
-    console.error("❌ getTodayRevenue error:", error);
     return res.status(500).json({ 
       success: false, 
-      message: "Internal server error" 
+      message: "Failed to fetch today's revenue. Please try again."
     });
   }
 };
@@ -357,10 +306,9 @@ export const getTotalRevenue = async (req, res) => {
       totalOrders,
     });
   } catch (error) {
-    console.error("❌ getTotalRevenue error:", error);
     return res.status(500).json({ 
       success: false, 
-      message: "Internal server error" 
+      message: "Failed to fetch total revenue. Please try again."
     });
   }
 };
@@ -391,10 +339,9 @@ export const getRevenueByDateRange = async (req, res) => {
       dailyRevenues: revenues,
     });
   } catch (error) {
-    console.error("❌ getRevenueByDateRange error:", error);
     return res.status(500).json({ 
       success: false, 
-      message: "Internal server error" 
+      message: "Failed to fetch revenue data. Please try again."
     });
   }
 };

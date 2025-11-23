@@ -1,0 +1,31 @@
+# === Environment files ===
+.env
+.env.local
+
+# === Node modules ===
+node_modules/
+server/node_modules/
+
+# === Logs ===
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+
+
+# === Build / Cache ===
+dist/
+build/
+.tmp/
+.cache/
+
+# === IDE / System files ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# === Misc ===
+*.local

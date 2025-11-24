@@ -17,32 +17,36 @@ const app = express();
 await connectDB();
 await connectCloudinary();
 
-// ✅ CORS Setup
+const allowedOrigins = [
+    process.env.FRONTEND_URL_1,
+    process.env.FRONTEND_URL_2,
+].filter(Boolean);
+
 app.use(cors({
-    origin: process.env.FRONTEND_URL || '*',
+    origin: function (origin, callback) {
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) return callback(null, true);
+        return callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allowedHeaders: ["Content-Type", "Authorization"],
 }));
 
-// Body Parser
 app.use(express.json());
 
-// 🔍 LOG EVERY REQUEST
 app.use((req, res, next) => {
-    console.log(`📥 ${req.method} ${req.url}`);
+    console.log(`${req.method} ${req.url}`);
     next();
 });
 
-// Health check
-app.get('/api/health', (req, res) => {
-    res.status(200).json({ 
-        status: 'ok',
+app.get("/api/health", (req, res) => {
+    res.status(200).json({
+        status: "ok",
         timestamp: new Date().toISOString(),
     });
 });
 
-// Routes
 app.use("/api/admin", adminRouter);
 app.use("/api/employ", employRouter);
 app.use("/api/menu", menuRouter);
@@ -50,26 +54,18 @@ app.use("/api/orders", orderRouter);
 app.use("/api/admin/employees", adminEmployRouter);
 app.use("/api/admin/calls", adminCallRouter);
 
-// 404 Handler
-app.use((req, res, next) => {
-    console.log('❌ 404 Not Found:', req.url);
+app.use((req, res) => {
     res.status(404).json({
         success: false,
-        message: 'Route not found',
-        path: req.url
+        message: "Route not found",
+        path: req.url,
     });
 });
 
-// Error Handler
 app.use((err, req, res, next) => {
-    console.error('🔥 ERROR CAUGHT:', err.message);
-    console.error('Stack:', err.stack);
-    console.error('URL:', req.url);
-    
     res.status(err.statusCode || 500).json({
         success: false,
         message: err.message,
-        stack: err.stack
     });
 });
 

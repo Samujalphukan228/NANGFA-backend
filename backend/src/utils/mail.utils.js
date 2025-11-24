@@ -24,14 +24,14 @@ const generateOTP = () => {
 
 const sentOTP = async (email, otp, purpose) => {
     const subjects = {
-        signup: "Verify Your Email - forEver",
-        login: "Login Verification Code - forEver",
-        reset: "Password Reset Code - forEver",
+        signup: "Verify Your Email - NANGFA ETHNIC RESTAURANT",
+        login: "Login Verification Code - NANGFA ETHNIC RESTAURANT",
+        reset: "Password Reset Code - NANGFA ETHNIC RESTAURANT",
     };
 
     try {
         await transporter.sendMail({
-            from: `"forEver" <${env.mailUser}>`,
+            from: `"NANGFA ETHNIC RESTAURANT" <${env.mailUser}>`,
             to: email,
             subject: subjects[purpose] || "Verification Code - forEver",
             text: `Your OTP for ${purpose} is: ${otp}\n\nThis code will expire in 10 minutes.\n\nIf you didn't request this, please ignore this email.\n\n- forEver Team`

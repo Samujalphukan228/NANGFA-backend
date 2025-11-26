@@ -9,15 +9,47 @@ const orderSchema = new mongoose.Schema({
     tableNumber: { type: Number },
     status: { 
         type: String, 
-        enum: ['preparing', 'completed'],
+        enum: ['preparing', 'completed', 'cancelled'],
         default: 'preparing' 
     },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', required: true },
     date: { type: Date, default: Date.now },
-    expiresAt: { type: Date, default: () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) } // 7 days
+    createdAt: { type: Date, default: Date.now },
+    
+
+    updatedItems: [{
+        menuId: { type: mongoose.Schema.Types.ObjectId, ref: 'Menu' },
+        oldQuantity: { type: Number },
+        newQuantity: { type: Number },
+        type: { type: String, enum: ['increased', 'decreased'] }
+    }],
+    newItems: [{ 
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Menu'
+    }],
+    removedItems: [{  
+        menuId: { type: mongoose.Schema.Types.ObjectId, ref: 'Menu' },
+        name: { type: String },
+        quantity: { type: Number }
+    }],
+    lastUpdatedAt: { type: Date, default: null },
+    updateHistory: [{  
+        updatedAt: { type: Date, default: Date.now },
+        updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+        changes: {
+            added: [{ menuId: String, name: String, quantity: Number }],
+            removed: [{ menuId: String, name: String, quantity: Number }],
+            updated: [{ menuId: String, name: String, oldQuantity: Number, newQuantity: Number }]
+        }
+    }],
+    
+    expiresAt: { type: Date, default: () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }
+}, {
+    timestamps: true  
 });
 
-
 orderSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index({ tableNumber: 1, status: 1 });
 
 export const orderModel = mongoose.model('Order', orderSchema);

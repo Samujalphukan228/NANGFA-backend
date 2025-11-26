@@ -1,4 +1,3 @@
-import { v2 as cloudinary } from "cloudinary";
 import { menuModel } from "../models/menu.model.js";
 
 export const addMenu = async (req, res) => {
@@ -13,23 +12,9 @@ export const addMenu = async (req, res) => {
       return res.status(400).json({ message: "Price must be a valid non-negative number" });
     }
 
-    // Handle single image
-    const image = req.file;
-
-    if (!image) {
-      return res.status(400).json({ message: "Image is required" });
-    }
-
-    // Upload to cloudinary
-    const result = await cloudinary.uploader.upload(image.path, {
-      folder: "restaurant/menu",
-      resource_type: "image",
-    });
-
     const menuData = {
       name: name.trim(),
       price: Number(price),
-      image: [result.secure_url], // Array with one image
     };
 
     const menu = new menuModel(menuData);
@@ -80,24 +65,6 @@ export const updateMenu = async (req, res) => {
       });
     }
 
-    // Handle single image upload
-    const image = req.file;
-
-    if (image) {
-      // Delete old image from Cloudinary
-      if (menu.image && menu.image.length > 0) {
-        const publicId = menu.image[0].split('/').slice(-2).join('/').split('.')[0];
-        await cloudinary.uploader.destroy(publicId);
-      }
-
-      // Upload new image
-      const result = await cloudinary.uploader.upload(image.path, {
-        folder: "restaurant/menu",
-        resource_type: "image",
-      });
-      menu.image = [result.secure_url];
-    }
-
     // Update fields
     menu.name = name ? name.trim() : menu.name;
     menu.price = price ? Number(price) : menu.price;
@@ -131,12 +98,6 @@ export const deleteMenu = async (req, res) => {
         success: false, 
         message: "Menu not found" 
       });
-    }
-
-    // Delete image from Cloudinary
-    if (menu.image && menu.image.length > 0) {
-      const publicId = menu.image[0].split('/').slice(-2).join('/').split('.')[0];
-      await cloudinary.uploader.destroy(publicId);
     }
 
     await menuModel.findByIdAndDelete(id);

@@ -1,13 +1,11 @@
 import express from "express";
-import multer from "multer";
 import rateLimit from "express-rate-limit";
 import { addMenu, deleteMenu, getAllMenus, updateMenu } from "../controllers/menu.controller.js";
 import { verifyAdmin } from "../middlewares/verifyAdmin.middleware.js";
 
-
 const menuRouter = express.Router();
-const upload = multer({ dest: "uploads/" });
 
+// Rate limiters
 const addMenuLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   max: 5,
@@ -41,23 +39,10 @@ const deleteMenuLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-menuRouter.get("/menu", verifyAdmin,getAllMenus)
-menuRouter.post(
-  "/add",
-  verifyAdmin,
-  addMenuLimiter,
-  upload.single("image"), 
-  addMenu
-);
-
-menuRouter.put(
-  "/:id",
-  verifyAdmin,
-  updateMenuLimiter,
-  upload.single("image"), 
-  updateMenu
-);
-
+// Routes - No multer middleware needed
+menuRouter.get("/menu", verifyAdmin, getAllMenus);
+menuRouter.post("/add", verifyAdmin, addMenuLimiter, addMenu);
+menuRouter.put("/:id", verifyAdmin, updateMenuLimiter, updateMenu);
 menuRouter.delete("/:id", verifyAdmin, deleteMenuLimiter, deleteMenu);
 
-export default menuRouter
+export default menuRouter;

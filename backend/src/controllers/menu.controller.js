@@ -2,7 +2,7 @@ import { menuModel } from "../models/menu.model.js";
 
 export const addMenu = async (req, res) => {
   try {
-    const { name, price } = req.body;
+    const { name, price, priority } = req.body; // Add priority
 
     if (!name || !price) {
       return res.status(400).json({ message: "Name and price are required" });
@@ -15,6 +15,7 @@ export const addMenu = async (req, res) => {
     const menuData = {
       name: name.trim(),
       price: Number(price),
+      priority: priority === true || priority === "true" || priority === 1, // Handle different input types
     };
 
     const menu = new menuModel(menuData);
@@ -38,7 +39,8 @@ export const addMenu = async (req, res) => {
 
 export const getAllMenus = async (req, res) => {
   try {
-    const menus = await menuModel.find().sort({ date: -1 });
+    // Sort by priority first (true items first), then by date
+    const menus = await menuModel.find().sort({ priority: -1, date: -1 });
     return res.status(200).json({
       success: true,
       count: menus.length,
@@ -55,7 +57,7 @@ export const getAllMenus = async (req, res) => {
 export const updateMenu = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, price } = req.body;
+    const { name, price, priority } = req.body; // Add priority
 
     const menu = await menuModel.findById(id);
     if (!menu) {
@@ -68,6 +70,9 @@ export const updateMenu = async (req, res) => {
     // Update fields
     menu.name = name ? name.trim() : menu.name;
     menu.price = price ? Number(price) : menu.price;
+    if (priority !== undefined) { // Check if priority is provided
+      menu.priority = priority === true || priority === "true" || priority === 1;
+    }
 
     await menu.save();
 

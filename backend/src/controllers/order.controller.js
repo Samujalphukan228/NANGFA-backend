@@ -184,7 +184,7 @@ export const createOrder = async (req, res) => {
 };
 
 // ============================================
-// UPDATE ORDER - COMPREHENSIVE
+// UPDATE ORDER - COMPREHENSIVE (FIXED)
 // ============================================
 
 export const updateOrder = async (req, res) => {
@@ -239,7 +239,15 @@ export const updateOrder = async (req, res) => {
         quantity: item.quantity
       }));
       updateData.totalPrice = totalPrice;
-      updateData.updatedItems = changes.updatedItems;
+      
+      // ✅ IMPORTANT: Store updatedItems with FULL change info
+      updateData.updatedItems = changes.updatedItems.map(item => ({
+        menuId: item.menuId,
+        oldQuantity: item.oldQuantity,
+        newQuantity: item.newQuantity,
+        change: item.newQuantity - item.oldQuantity
+      }));
+      
       updateData.newItems = changes.newItems;
       updateData.removedItems = changes.removedItems;
 
@@ -295,15 +303,37 @@ export const updateOrder = async (req, res) => {
     // Emit socket events
     const io = req.app.get("io");
     if (io) {
+      // ✅ FIX: Preserve change info when emitting
       const socketData = {
         ...updatedOrder.toObject(),
-        updatedItems: updatedOrder.updatedItems.map(u => u.menuId.toString()),
+        updatedItems: updatedOrder.updatedItems.map(item => {
+          // If it's already an object with change info
+          if (typeof item === 'object' && item.menuId) {
+            return {
+              menuId: item.menuId.toString(),
+              oldQuantity: item.oldQuantity,
+              newQuantity: item.newQuantity,
+              change: item.change || (item.newQuantity - item.oldQuantity)
+            };
+          }
+          // Fallback for old format
+          return { menuId: item.toString() };
+        }),
         newItems: updatedOrder.newItems.map(id => id.toString()),
         removedItems: updatedOrder.removedItems
       };
 
+      // Send to kitchen with full change details
       io.to('kitchen').emit("order:update", socketData);
       io.emit("order:update", socketData);
+
+      // Log what we're sending for debugging
+      console.log('📤 Emitting order:update with changes:', {
+        orderId: id,
+        updatedItems: socketData.updatedItems,
+        newItems: socketData.newItems.length,
+        removedItems: socketData.removedItems.length
+      });
 
       // Also emit specific events for significant changes
       if (changes) {
@@ -327,6 +357,10 @@ export const updateOrder = async (req, res) => {
       console.log(`   - Added: ${changes.newItems.length}`);
       console.log(`   - Removed: ${changes.removedItems.length}`);
       console.log(`   - Updated: ${changes.updatedItems.length}`);
+      // Log actual quantity changes
+      changes.updatedItems.forEach(item => {
+        console.log(`   - ${item.menuId}: ${item.oldQuantity} → ${item.newQuantity} (${item.newQuantity > item.oldQuantity ? '+' : ''}${item.newQuantity - item.oldQuantity})`);
+      });
     }
 
     return res.status(200).json({

@@ -25,6 +25,8 @@ const env = {
     jwtSecret: process.env.JWT_SECRET,
     adminEmail: process.env.ADMIN_EMAIL,
     employfrontend: process.env.FRONTEND_URL,
+    BREVO_SMTP_USER: process.env.BREVO_SMTP_USER,
+    BREVO_SMTP_KEY: process.env.BREVO_SMTP_KEY,
 }
 
 export default env;

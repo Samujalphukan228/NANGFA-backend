@@ -9,6 +9,7 @@ import { createToken } from "../utils/createToken.utils.js";
 export const RegisterAdmin = async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log("Register attempt:", email);
 
     if (!email || !password)
       return res.status(400).json({ success: false, message: "All fields are required" });
@@ -19,7 +20,8 @@ export const RegisterAdmin = async (req, res) => {
     if (password.length < 6 || password.length > 64)
       return res.status(400).json({ success: false, message: "Password must be between 6 and 64 characters" });
 
-    if (email.toLowerCase() !== env.adminEmail.toLowerCase())
+    // Check if admin email restriction is set
+    if (env.adminEmail && email.toLowerCase() !== env.adminEmail.toLowerCase())
       return res.status(403).json({ success: false, message: "Forbidden: Unauthorized email" });
 
     const existingAdmin = await adminModel.findOne({ email: email.toLowerCase() });
@@ -31,12 +33,14 @@ export const RegisterAdmin = async (req, res) => {
       await adminModel.deleteOne({ email });
 
     const otp = generateOTP();
-    const { success, hash, message } = await hashPassword(password);
+    console.log("OTP generated:", otp);
+
+    const { success, hash } = await hashPassword(password);
 
     if (!success)
       return res.status(500).json({ success: false, message: "Failed to hash password" });
 
-    const admin = await adminModel.create({
+    await adminModel.create({
       email: email.toLowerCase(),
       password: hash,
       otp,
@@ -46,6 +50,7 @@ export const RegisterAdmin = async (req, res) => {
     });
 
     await sentOTP(email, otp, "signup");
+    console.log("OTP sent to:", email);
 
     setTimeout(async () => {
       try {
@@ -53,9 +58,7 @@ export const RegisterAdmin = async (req, res) => {
         if (unverified && !unverified.isVerified) {
           await adminModel.deleteOne({ email });
         }
-      } catch (err) {
-        // Silent cleanup failure
-      }
+      } catch (err) {}
     }, 10 * 60 * 1000);
 
     return res.status(201).json({
@@ -63,6 +66,7 @@ export const RegisterAdmin = async (req, res) => {
       message: "OTP sent to your email address. Please verify to complete registration.",
     });
   } catch (error) {
+    console.error("Register error:", error);
     return res.status(500).json({ success: false, message: "Registration failed. Please try again." });
   }
 };
@@ -98,6 +102,7 @@ export const verifyAdminOTP = async (req, res) => {
       message: "Admin verified successfully. You can now log in.",
     });
   } catch (error) {
+    console.error("Verify OTP error:", error);
     return res.status(500).json({ success: false, message: "Verification failed. Please try again." });
   }
 };
@@ -105,6 +110,7 @@ export const verifyAdminOTP = async (req, res) => {
 export const loginAdmin = async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log("Login attempt:", email);
 
     if (!email || !password)
       return res.status(400).json({ success: false, message: "Email and password are required" });
@@ -125,6 +131,8 @@ export const loginAdmin = async (req, res) => {
 
     const token = createToken(admin._id);
 
+    console.log("Login successful:", email);
+
     return res.status(200).json({
       success: true,
       message: "Login successful",
@@ -135,6 +143,7 @@ export const loginAdmin = async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("Login error:", error);
     return res.status(500).json({ success: false, message: "Login failed. Please try again." });
   }
 };
@@ -142,6 +151,7 @@ export const loginAdmin = async (req, res) => {
 export const forgotAdminPassword = async (req, res) => {
   try {
     const { email } = req.body;
+    console.log("Forgot password attempt:", email);
 
     if (!email)
       return res.status(400).json({ success: false, message: "Email is required" });
@@ -150,25 +160,29 @@ export const forgotAdminPassword = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid email address" });
 
     const admin = await adminModel.findOne({ email: email.toLowerCase() });
-    if (!admin)
+    if (!admin) {
       return res.status(200).json({
         success: true,
         message: "If an admin with this email exists, an OTP has been sent.",
       });
+    }
 
-    // Generate new OTP (rate limit removed)
     const otp = generateOTP();
+    console.log("Reset OTP generated:", otp);
+
     admin.otp = otp;
     admin.otpExpires = Date.now() + 10 * 60 * 1000;
 
     await admin.save();
     await sentOTP(email, otp, "reset");
+    console.log("Reset OTP sent to:", email);
 
     return res.status(200).json({
       success: true,
-      message: "OTP sent to your email address. Please verify to reset your password.",
+      message: "OTP sent to your email address.",
     });
   } catch (error) {
+    console.error("Forgot password error:", error);
     return res.status(500).json({ success: false, message: "Request failed. Please try again." });
   }
 };
@@ -203,11 +217,14 @@ export const resetAdminPassword = async (req, res) => {
 
     await admin.save();
 
+    console.log("Password reset successful:", email);
+
     return res.status(200).json({
       success: true,
       message: "Password has been reset successfully. You can now log in.",
     });
   } catch (error) {
+    console.error("Reset password error:", error);
     return res.status(500).json({ success: false, message: "Password reset failed. Please try again." });
   }
-};
+};2

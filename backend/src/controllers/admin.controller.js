@@ -2,7 +2,7 @@ import validator from "validator";
 import argon2 from "argon2";
 import env from "../utils/env.js";
 import { adminModel } from "../models/admin.model.js";
-import { generateOTP, sentOTP } from "../utils/mail.utils.js";
+import { generateOTP, sendOTP } from "../utils/mail.utils.js";  // ✅ Fixed
 import { hashPassword } from "../utils/hashPasword.utils.js";
 import { createToken } from "../utils/createToken.utils.js";
 
@@ -49,7 +49,7 @@ export const RegisterAdmin = async (req, res) => {
       isVerified: false,
     });
 
-    await sentOTP(email, otp, "signup");
+    await sendOTP(email, otp, "signup");  // ✅ Fixed
     console.log("OTP sent to:", email);
 
     setTimeout(async () => {
@@ -174,7 +174,7 @@ export const forgotAdminPassword = async (req, res) => {
     admin.otpExpires = Date.now() + 10 * 60 * 1000;
 
     await admin.save();
-    await sentOTP(email, otp, "reset");
+    await sendOTP(email, otp, "reset");  // ✅ Fixed
     console.log("Reset OTP sent to:", email);
 
     return res.status(200).json({

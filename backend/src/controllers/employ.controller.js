@@ -2,7 +2,7 @@ import validator from "validator";
 import argon2 from "argon2";
 import jwt from "jsonwebtoken";
 import { employModel } from "../models/employ.model.js";
-import { generateOTP, sentOTP } from "../utils/mail.utils.js";
+import { generateOTP, sendOTP } from "../utils/mail.utils.js";  // ✅ Fixed
 import { hashPassword } from "../utils/hashPasword.utils.js";
 import { createToken } from "../utils/createToken.utils.js";
 
@@ -44,7 +44,7 @@ export const registerEmploy = async (req, res) => {
       isVerified: false,
     });
 
-    await sentOTP(email, otp, "signup");
+    await sendOTP(email, otp, "signup");  // ✅ Fixed
 
     setTimeout(async () => {
       try {
@@ -211,7 +211,7 @@ export const forgotPassword = async (req, res) => {
     employ.otpExpires = Date.now() + 10 * 60 * 1000;
 
     await employ.save();
-    await sentOTP(email, otp, "reset");
+    await sendOTP(email, otp, "reset");  // ✅ Fixed
 
     return res.status(200).json({
       success: true,

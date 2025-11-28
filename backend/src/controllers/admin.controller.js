@@ -1,6 +1,5 @@
 // admin.controller.js
 import jwt from "jsonwebtoken";
-import bcrypt from "bcryptjs";
 import env from "../utils/env.js";
 
 export const loginAdmin = async (req, res) => {
@@ -61,4 +60,4 @@ export const loginAdmin = async (req, res) => {
             message: "Login failed"
         });
     }
-};
+}; 

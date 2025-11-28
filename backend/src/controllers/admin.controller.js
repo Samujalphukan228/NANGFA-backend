@@ -156,12 +156,7 @@ export const forgotAdminPassword = async (req, res) => {
         message: "If an admin with this email exists, an OTP has been sent.",
       });
 
-    if (admin.otpExpires && admin.otpExpires > Date.now())
-      return res.status(429).json({
-        success: false,
-        message: "An OTP was already sent recently. Please try again later.",
-      });
-
+    // Generate new OTP (rate limit removed)
     const otp = generateOTP();
     admin.otp = otp;
     admin.otpExpires = Date.now() + 10 * 60 * 1000;

@@ -1,9 +1,9 @@
+// adminCall.model.js
 import mongoose from "mongoose";
 
 const adminCallSchema = new mongoose.Schema({
     admin: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Admin",
+        type: String,  
         required: true
     },
     kitchenStaff: {

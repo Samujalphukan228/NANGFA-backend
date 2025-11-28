@@ -1,3 +1,4 @@
+// adminCall.controller.js
 import { adminCallModel } from "../models/adminCall.model.js";
 
 // Get call history
@@ -5,8 +6,7 @@ export const getCallHistory = async (req, res) => {
     try {
         const calls = await adminCallModel
             .find()
-            .populate('admin', 'email')
-            .populate('kitchenStaff', 'name email')
+            .populate('kitchenStaff', 'name email')  // ✅ Removed admin populate
             .sort('-createdAt')
             .limit(50);
 
@@ -30,7 +30,7 @@ export const createCallRecord = async (req, res) => {
         const { kitchenStaffId } = req.body;
 
         const call = await adminCallModel.create({
-            admin: req.user.id, // from auth middleware
+            admin: req.admin?._id || 'admin',  // ✅ Use string 'admin'
             kitchenStaff: kitchenStaffId || null,
             status: 'ongoing'
         });
@@ -64,11 +64,13 @@ export const endCallRecord = async (req, res) => {
 
         call.endTime = new Date();
         call.status = 'completed';
+        call.duration = Math.floor((call.endTime - call.startTime) / 1000);
         await call.save();
 
         return res.status(200).json({
             success: true,
-            call
+            call,
+            duration: call.duration
         });
     } catch (error) {
         console.error("endCallRecord error:", error);

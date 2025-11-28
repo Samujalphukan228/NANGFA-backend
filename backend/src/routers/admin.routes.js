@@ -1,13 +1,10 @@
+// src/routers/admin.routes.js
 import express from "express";
-import { forgotAdminPassword, loginAdmin, RegisterAdmin, resetAdminPassword, verifyAdminOTP } from "../controllers/admin.controller.js";
+import { loginAdmin } from "../controllers/admin.controller.js";
 
 const adminRouter = express.Router();
 
-adminRouter
-  .post("/register", RegisterAdmin)
-  .post("/verify-otp", verifyAdminOTP)
-  .post("/login", loginAdmin)
-  .post("/forgot-password", forgotAdminPassword)
-  .post("/reset-password", resetAdminPassword);
+// ✅ Only login route - admin is hardcoded in .env
+adminRouter.post("/login", loginAdmin);
 
 export default adminRouter;

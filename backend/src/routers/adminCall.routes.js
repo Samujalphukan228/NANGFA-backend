@@ -1,12 +1,13 @@
 import express from "express";
 import { getCallHistory, createCallRecord, endCallRecord } from "../controllers/adminCall.controller.js";
-// You'll need to create auth middleware or use existing one
+import { verifyAdmin } from "../middlewares/verifyAdmin.middleware.js";  // ✅ Add this import
 
 const adminCallRouter = express.Router();
 
+
 adminCallRouter
-    .get("/history", getCallHistory)
-    .post("/start", createCallRecord)
-    .put("/end/:callId", endCallRecord);
+    .get("/history", verifyAdmin, getCallHistory)
+    .post("/start", verifyAdmin, createCallRecord)
+    .put("/end/:callId", verifyAdmin, endCallRecord);
 
 export default adminCallRouter;

@@ -26,10 +26,9 @@ const employSchema = new mongoose.Schema({
     isVerified: { 
         type: Boolean, 
         default: false 
-    }, 
-    otp: { type: String },
-    otpExpires: { type: Date },
-    otpPurpose: { type: String },
-})
+    }
+}, {
+    timestamps: true  // Optional: adds createdAt and updatedAt
+});
 
 export const employModel = mongoose.models.Employee || mongoose.model("Employee", employSchema);

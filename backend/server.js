@@ -1,79 +1,9 @@
-// // server.js - Add connectDB here
-// import http from "http";
-// import env from "./src/utils/env.js";
-// import app from "./app.js";
-// import { setupSocket } from "./src/utils/socket.utils.js";
-// import { connectDB } from "./src/configs/DataBase.js";  // ✅ Add this
-
-// const server = http.createServer(app);
-// const port = env.port;
-
-// const io = setupSocket(server);
-// app.set("io", io);
-
-// // Graceful shutdown
-// const gracefulShutdown = () => {
-//     server.close(() => {
-//         io.close(() => {
-//             process.exit(0);
-//         });
-//     });
-
-//     setTimeout(() => {
-//         process.exit(1);
-//     }, 30000);
-// };
-
-// // Handle process signals
-// process.on('SIGTERM', gracefulShutdown);
-// process.on('SIGINT', gracefulShutdown);
-// process.on('uncaughtException', (error) => {
-//     console.error('💥 Uncaught Exception:', error);
-//     gracefulShutdown();
-// });
-// process.on('unhandledRejection', (error) => {
-//     console.error('💥 Unhandled Rejection:', error);
-//     gracefulShutdown();
-// });
-
-// // ✅ Connect to DB first, then start server
-// connectDB()
-//     .then(() => {
-//         server.listen(port, () => {
-//             console.log(`🚀 Server is running at port ${port}`);
-//             console.log(`🔌 Socket.io is ready`);
-//         });
-//     })
-//     .catch((error) => {
-//         console.error("❌ Failed to connect to database:", error);
-//         process.exit(1);
-//     });
-
-// server.on('error', (error) => {
-//     if (error.code === 'EADDRINUSE') {
-//         console.error(`❌ Port ${port} is already in use`);
-//     } else {
-//         console.error('❌ Server error:', error);
-//     }
-//     process.exit(1);
-// });
-
-
-
-
-
-
-
-
-
-
-// server.js - EVERYTHING IN ONE FILE
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
 import http from "http";
 import mongoose from "mongoose";
-import { Server } from "socket.io";
+import { setupSocket } from "./src/utils/socket.utils.js";  // ✅ Import your socket setup
 
 // Load environment variables
 dotenv.config();
@@ -81,7 +11,7 @@ dotenv.config();
 // Import env config
 import env from "./src/utils/env.js";
 
-// Import routers (comment these out if they cause issues)
+// Import routers
 import adminRouter from "./src/routers/admin.routes.js";
 import employRouter from "./src/routers/employ.routes.js";
 import menuRouter from "./src/routers/menu.routes.js";
@@ -143,33 +73,63 @@ app.use((err, req, res, next) => {
 const server = http.createServer(app);
 const port = env.port || 5000;
 
-// Setup Socket.io
-const io = new Server(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
-    }
-});
+// ✅ Setup Socket.io using your existing socket.utils.js
+const io = setupSocket(server);
+app.set("io", io);
 
-io.on("connection", (socket) => {
-    console.log("🔌 Client connected:", socket.id);
+console.log("✅ Socket.io configured with authentication and WebRTC support");
+
+// ✅ Optional: Add debug endpoint to check active rooms and connections
+app.get("/api/debug/socket-status", (req, res) => {
+    const rooms = {};
     
-    socket.on("disconnect", () => {
-        console.log("🔌 Client disconnected:", socket.id);
+    io.sockets.adapter.rooms.forEach((sockets, roomName) => {
+        // Filter relevant rooms
+        if (roomName === 'kitchen' || 
+            roomName === 'admin' || 
+            roomName.startsWith('role:') || 
+            roomName.startsWith('table:')) {
+            rooms[roomName] = {
+                memberCount: sockets.size,
+                members: Array.from(sockets)
+            };
+        }
+    });
+    
+    res.json({
+        success: true,
+        timestamp: new Date().toISOString(),
+        connectedSockets: io.sockets.sockets.size,
+        rooms,
+        features: [
+            'WebRTC Audio/Video Calls',
+            'Order Notifications',
+            'Real-time Updates',
+            'Room-based Broadcasting'
+        ]
     });
 });
-
-app.set("io", io);
 
 // Graceful shutdown
 const gracefulShutdown = () => {
+    console.log('🛑 Starting graceful shutdown...');
+    
     server.close(() => {
+        console.log('✅ HTTP server closed');
+        
         io.close(() => {
-            process.exit(0);
+            console.log('✅ Socket.io closed');
+            
+            mongoose.connection.close(false, () => {
+                console.log('✅ MongoDB connection closed');
+                process.exit(0);
+            });
         });
     });
 
+    // Force shutdown after 30 seconds
     setTimeout(() => {
+        console.error('❌ Could not close connections in time, forcefully shutting down');
         process.exit(1);
     }, 30000);
 };
@@ -192,8 +152,14 @@ mongoose.connect(env.mongoURI)
         console.log("✅ MongoDB connected successfully");
         
         server.listen(port, () => {
-            console.log(`🚀 Server is running at port ${port}`);
-            console.log(`🔌 Socket.io is ready`);
+            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+            console.log(`🚀 NANGFA Backend Server Started`);
+            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+            console.log(`📡 HTTP Server:    http://localhost:${port}`);
+            console.log(`🔌 WebSocket:      ws://localhost:${port}`);
+            console.log(`🗄️  Database:       Connected`);
+            console.log(`🎯 Features:       Orders, Menu, Calls, Auth`);
+            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
         });
     })
     .catch((error) => {

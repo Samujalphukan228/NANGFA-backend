@@ -1,3 +1,4 @@
+// order.model.js
 import mongoose from 'mongoose';
 
 const orderSchema = new mongoose.Schema({
@@ -12,10 +13,16 @@ const orderSchema = new mongoose.Schema({
         enum: ['preparing', 'completed', 'cancelled'],
         default: 'preparing' 
     },
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', required: true },
+    
+    // ✅ CHANGED: From ObjectId to String
+    createdBy: { 
+        type: String,  // ← Changed from ObjectId
+        required: true,
+        default: 'admin'
+    },
+    
     date: { type: Date, default: Date.now },
     createdAt: { type: Date, default: Date.now },
-    
 
     updatedItems: [{
         menuId: { type: mongoose.Schema.Types.ObjectId, ref: 'Menu' },
@@ -33,9 +40,11 @@ const orderSchema = new mongoose.Schema({
         quantity: { type: Number }
     }],
     lastUpdatedAt: { type: Date, default: null },
+    
+    // ✅ CHANGED: updatedBy also to String
     updateHistory: [{  
         updatedAt: { type: Date, default: Date.now },
-        updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+        updatedBy: { type: String },  // ← Changed from ObjectId
         changes: {
             added: [{ menuId: String, name: String, quantity: Number }],
             removed: [{ menuId: String, name: String, quantity: Number }],

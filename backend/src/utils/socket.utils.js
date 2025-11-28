@@ -2,7 +2,6 @@ import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
 import env from "./env.js";
 import { employModel } from "../models/employ.model.js";
-import { adminModel } from "../models/admin.model.js";
 
 export const setupSocket = (server) => {
   const io = new Server(server, {
@@ -29,14 +28,23 @@ export const setupSocket = (server) => {
 
       const decoded = jwt.verify(token, env.jwtSecret);
 
-      let user = await employModel.findById(decoded.id).select('-password');
-      let userType = 'employee';
-      
-      if (!user) {
-        user = await adminModel.findById(decoded.id).select('-password');
-        userType = 'admin';
+      // Handle admin (env-based, no database)
+      if (decoded.id === 'admin') {
+        socket.user = {
+          id: 'admin',
+          email: decoded.email || env.adminEmail,
+          role: 'admin',
+          isApproved: true,
+          name: 'Admin',
+          type: 'admin'
+        };
+        console.log('✅ Admin authenticated via JWT');
+        return next();
       }
 
+      // Handle employees (database)
+      const user = await employModel.findById(decoded.id).select('-password');
+      
       if (!user) {
         return next(new Error('User not found'));
       }
@@ -44,14 +52,16 @@ export const setupSocket = (server) => {
       socket.user = {
         id: user._id.toString(),
         email: user.email,
-        role: user.role || userType,
+        role: user.role || 'employee',
         isApproved: user.isAproved !== undefined ? user.isAproved : true,
         name: user.name || user.email.split('@')[0],
-        type: userType
+        type: 'employee'
       };
 
+      console.log('✅ Employee authenticated:', user.email);
       next();
     } catch (err) {
+      console.error('❌ Socket auth error:', err.message);
       next(new Error('Authentication failed'));
     }
   });
@@ -60,11 +70,14 @@ export const setupSocket = (server) => {
   // CONNECTION HANDLER
   // ============================================
   io.on("connection", (socket) => {
+    console.log("🔌 Client connected:", socket.id, `[${socket.user?.type}]`);
+
     // ============================================
     // JOIN ROLE ROOM
     // ============================================
     socket.on("joinRole", (role) => {
       socket.join(role);
+      console.log(`✅ Socket ${socket.id} joined room: ${role}`);
       
       socket.emit('room:joined', {
         room: role,
@@ -76,8 +89,10 @@ export const setupSocket = (server) => {
     if (socket.user?.type === 'admin') {
       socket.join('role:admin');
       socket.join('admin');
+      console.log(`✅ Admin auto-joined rooms: role:admin, admin`);
     } else if (socket.user?.role === 'kitchen') {
       socket.join('kitchen');
+      console.log(`✅ Kitchen staff auto-joined room: kitchen`);
     }
 
     // ============================================
@@ -86,6 +101,7 @@ export const setupSocket = (server) => {
     socket.on("joinTable", (tableNumber) => {
       if (tableNumber) {
         socket.join(`table:${tableNumber}`);
+        console.log(`✅ Socket ${socket.id} joined table:${tableNumber}`);
       }
     });
 
@@ -99,6 +115,8 @@ export const setupSocket = (server) => {
 
       const kitchenRoom = io.sockets.adapter.rooms.get('kitchen');
       const kitchenMembers = kitchenRoom ? kitchenRoom.size : 0;
+
+      console.log(`📞 Admin calling kitchen (${kitchenMembers} staff online)`);
 
       if (kitchenMembers === 0) {
         socket.emit('call:error', { 
@@ -115,11 +133,15 @@ export const setupSocket = (server) => {
         offer,
         timestamp: Date.now()
       });
+
+      console.log(`📞 Call sent to kitchen room`);
     });
 
     // Kitchen auto-answers
     socket.on('kitchen:answer-call', (data) => {
       const { to, answer } = data;
+
+      console.log(`📞 Kitchen answering call to socket ${to}`);
 
       io.to(to).emit('admin:call-answered', { 
         answer,
@@ -133,6 +155,8 @@ export const setupSocket = (server) => {
     // Admin ends call
     socket.on('admin:end-call', (data) => {
       const { to } = data || {};
+
+      console.log(`📞 Admin ended call`);
 
       io.to('kitchen').emit('kitchen:call-ended', {
         timestamp: Date.now(),
@@ -150,6 +174,8 @@ export const setupSocket = (server) => {
     // Kitchen ends call
     socket.on('kitchen:end-call', (data) => {
       const { to } = data || {};
+
+      console.log(`📞 Kitchen ended call`);
 
       if (to) {
         io.to(to).emit('admin:call-ended', {
@@ -180,6 +206,7 @@ export const setupSocket = (server) => {
 
     // Admin mutes kitchen microphone
     socket.on('admin:mute-kitchen', () => {
+      console.log(`🔇 Admin muting kitchen`);
       io.to('kitchen').emit('kitchen:muted', {
         timestamp: Date.now()
       });
@@ -187,6 +214,7 @@ export const setupSocket = (server) => {
 
     // Admin unmutes kitchen microphone
     socket.on('admin:unmute-kitchen', () => {
+      console.log(`🔊 Admin unmuting kitchen`);
       io.to('kitchen').emit('kitchen:unmuted', {
         timestamp: Date.now()
       });
@@ -195,6 +223,8 @@ export const setupSocket = (server) => {
     // Admin toggles kitchen video
     socket.on('admin:toggle-kitchen-video', (data) => {
       const { enabled } = data;
+      
+      console.log(`📹 Admin toggled kitchen video: ${enabled ? 'ON' : 'OFF'}`);
       
       io.to('kitchen').emit('kitchen:video-toggled', { 
         enabled,
@@ -212,6 +242,8 @@ export const setupSocket = (server) => {
         members: kitchenRoom ? kitchenRoom.size : 0,
         timestamp: Date.now()
       });
+
+      console.log(`🔍 Kitchen availability check: ${isAvailable ? 'Available' : 'Unavailable'}`);
     });
 
     // Get active rooms info
@@ -227,13 +259,15 @@ export const setupSocket = (server) => {
         rooms,
         timestamp: Date.now()
       });
+
+      console.log(`📋 Rooms info requested:`, rooms);
     });
 
     // ============================================
-    // EXISTING EVENTS
+    // EMPLOYEE REGISTRATION EVENT
     // ============================================
-
     socket.on('employee:registered', (data) => {
+      console.log(`👤 New employee registered:`, data.email);
       io.to('role:admin').emit('employee:registered', data);
     });
 
@@ -241,6 +275,8 @@ export const setupSocket = (server) => {
     // DISCONNECT HANDLER
     // ============================================
     socket.on("disconnect", (reason) => {
+      console.log(`🔌 Client disconnected: ${socket.id} (${reason})`);
+
       if (socket.user?.type === 'admin') {
         io.to('kitchen').emit('kitchen:call-ended', {
           timestamp: Date.now(),
@@ -264,7 +300,7 @@ export const setupSocket = (server) => {
     // ERROR HANDLER
     // ============================================
     socket.on('error', (error) => {
-      // Silent error handling
+      console.error('❌ Socket error:', error);
     });
   });
 

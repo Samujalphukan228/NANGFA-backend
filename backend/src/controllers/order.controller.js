@@ -38,15 +38,14 @@ const validateAndCalculateTotal = async (menuItems) => {
  */
 const findOrderChanges = (oldOrder, newMenuItems) => {
   const changes = {
-    newItems: [],           // Items added
-    removedItems: [],       // Items removed
-    updatedItems: [],       // Items with quantity changed
-    added: [],              // For history
-    removed: [],            // For history
-    updated: []             // For history
+    newItems: [],
+    removedItems: [],
+    updatedItems: [],
+    added: [],
+    removed: [],
+    updated: []
   };
 
-  // Create maps for easy comparison
   const oldItemsMap = new Map();
   oldOrder.menuItems.forEach(item => {
     const menuId = item.menuId._id ? item.menuId._id.toString() : item.menuId.toString();
@@ -65,7 +64,6 @@ const findOrderChanges = (oldOrder, newMenuItems) => {
     });
   });
 
-  // Find NEW items (in new but not in old)
   newItemsMap.forEach((newItem, menuId) => {
     if (!oldItemsMap.has(menuId)) {
       changes.newItems.push(menuId);
@@ -78,7 +76,6 @@ const findOrderChanges = (oldOrder, newMenuItems) => {
     }
   });
 
-  // Find REMOVED items (in old but not in new)
   oldItemsMap.forEach((oldItem, menuId) => {
     if (!newItemsMap.has(menuId)) {
       changes.removedItems.push({
@@ -95,7 +92,6 @@ const findOrderChanges = (oldOrder, newMenuItems) => {
     }
   });
 
-  // Find UPDATED items (in both but quantity changed)
   newItemsMap.forEach((newItem, menuId) => {
     const oldItem = oldItemsMap.get(menuId);
     if (oldItem && oldItem.quantity !== newItem.quantity) {
@@ -127,7 +123,6 @@ export const createOrder = async (req, res) => {
   try {
     const { menuItems, tableNumber } = req.body;
 
-    // Validation
     if (!menuItems || menuItems.length === 0) {
       return res.status(400).json({ 
         success: false, 
@@ -135,10 +130,8 @@ export const createOrder = async (req, res) => {
       });
     }
 
-    // Validate and calculate total
     const { totalPrice, validatedItems } = await validateAndCalculateTotal(menuItems);
 
-    // Create order
     const orderData = {
       menuItems: menuItems.map(item => ({
         menuId: item.menuId,
@@ -146,7 +139,7 @@ export const createOrder = async (req, res) => {
       })),
       totalPrice,
       tableNumber: tableNumber || null,
-      createdBy: req.admin._id,
+      createdBy: req.admin._id || 'admin',
       status: 'preparing',
       updatedItems: [],
       newItems: [],
@@ -158,16 +151,21 @@ export const createOrder = async (req, res) => {
     const order = new orderModel(orderData);
     await order.save();
 
-    // Populate for response
     await order.populate('menuItems.menuId', 'name price image category');
 
-    // Emit socket event
     const io = req.app.get("io");
     if (io) {
-      io.to('kitchen').emit("order:new", order);
+      // ✅ FIX: Emit to BOTH kitchen AND admin rooms, plus globally
+      console.log('📤 Emitting order:new to all rooms');
+      
+      io.to('kitchen').emit("order:new", order);  // Kitchen displays
+      io.to('admin').emit("order:new", order);    // Admin dashboards
+      io.emit("order:new", order);                 // Global (all connected)
+      
+      console.log(`✅ Order created and emitted: ${order._id}`);
+    } else {
+      console.error('❌ Socket.io instance not found!');
     }
-
-    console.log(`✅ Order created: ${order._id} (${validatedItems.length} items, ₹${totalPrice})`);
 
     return res.status(201).json({
       success: true,
@@ -182,9 +180,8 @@ export const createOrder = async (req, res) => {
     });
   }
 };
-
 // ============================================
-// UPDATE ORDER - COMPREHENSIVE (FIXED)
+// UPDATE ORDER
 // ============================================
 
 export const updateOrder = async (req, res) => {
@@ -192,7 +189,6 @@ export const updateOrder = async (req, res) => {
     const { id } = req.params;
     const { menuItems, tableNumber, status } = req.body;
 
-    // Find existing order
     const order = await orderModel
       .findById(id)
       .populate('menuItems.menuId', 'name price image category');
@@ -204,7 +200,6 @@ export const updateOrder = async (req, res) => {
       });
     }
 
-    // Check if order can be updated
     if (order.status === 'completed') {
       return res.status(400).json({
         success: false,
@@ -216,9 +211,7 @@ export const updateOrder = async (req, res) => {
     let changes = null;
     let totalPrice = order.totalPrice;
 
-    // Handle menu items update
     if (menuItems && menuItems.length >= 0) {
-      // Validate if order would be empty
       if (menuItems.length === 0) {
         return res.status(400).json({
           success: false,
@@ -226,21 +219,17 @@ export const updateOrder = async (req, res) => {
         });
       }
 
-      // Validate and calculate new total
       const { totalPrice: newTotal, validatedItems } = await validateAndCalculateTotal(menuItems);
       totalPrice = newTotal;
 
-      // Find all changes
       changes = findOrderChanges(order, validatedItems);
 
-      // Prepare update data
       updateData.menuItems = menuItems.map(item => ({
         menuId: item.menuId,
         quantity: item.quantity
       }));
       updateData.totalPrice = totalPrice;
       
-      // ✅ IMPORTANT: Store updatedItems with FULL change info
       updateData.updatedItems = changes.updatedItems.map(item => ({
         menuId: item.menuId,
         oldQuantity: item.oldQuantity,
@@ -251,17 +240,15 @@ export const updateOrder = async (req, res) => {
       updateData.newItems = changes.newItems;
       updateData.removedItems = changes.removedItems;
 
-      // Only update timestamp if there are actual changes
       if (changes.newItems.length > 0 || 
           changes.removedItems.length > 0 || 
           changes.updatedItems.length > 0) {
         updateData.lastUpdatedAt = new Date();
 
-        // Add to update history
         updateData.$push = {
           updateHistory: {
             updatedAt: new Date(),
-            updatedBy: req.admin._id,
+            updatedBy: req.admin._id || 'admin',  // ✅ String
             changes: {
               added: changes.added,
               removed: changes.removed,
@@ -272,12 +259,10 @@ export const updateOrder = async (req, res) => {
       }
     }
 
-    // Handle table number update
     if (tableNumber !== undefined) {
       updateData.tableNumber = tableNumber;
     }
 
-    // Handle status update
     if (status) {
       if (!['preparing', 'completed', 'cancelled'].includes(status)) {
         return res.status(400).json({
@@ -287,7 +272,6 @@ export const updateOrder = async (req, res) => {
       }
       updateData.status = status;
 
-      // Clear highlights if status changes to completed or cancelled
       if (status === 'completed' || status === 'cancelled') {
         updateData.updatedItems = [];
         updateData.newItems = [];
@@ -295,19 +279,15 @@ export const updateOrder = async (req, res) => {
       }
     }
 
-    // Perform update
     const updatedOrder = await orderModel
       .findByIdAndUpdate(id, updateData, { new: true, runValidators: false })
       .populate('menuItems.menuId', 'name price image category');
 
-    // Emit socket events
     const io = req.app.get("io");
     if (io) {
-      // ✅ FIX: Preserve change info when emitting
       const socketData = {
         ...updatedOrder.toObject(),
         updatedItems: updatedOrder.updatedItems.map(item => {
-          // If it's already an object with change info
           if (typeof item === 'object' && item.menuId) {
             return {
               menuId: item.menuId.toString(),
@@ -316,18 +296,15 @@ export const updateOrder = async (req, res) => {
               change: item.change || (item.newQuantity - item.oldQuantity)
             };
           }
-          // Fallback for old format
           return { menuId: item.toString() };
         }),
         newItems: updatedOrder.newItems.map(id => id.toString()),
         removedItems: updatedOrder.removedItems
       };
 
-      // Send to kitchen with full change details
       io.to('kitchen').emit("order:update", socketData);
       io.emit("order:update", socketData);
 
-      // Log what we're sending for debugging
       console.log('📤 Emitting order:update with changes:', {
         orderId: id,
         updatedItems: socketData.updatedItems,
@@ -335,7 +312,6 @@ export const updateOrder = async (req, res) => {
         removedItems: socketData.removedItems.length
       });
 
-      // Also emit specific events for significant changes
       if (changes) {
         if (changes.newItems.length > 0) {
           io.to('kitchen').emit("order:items-added", {
@@ -357,10 +333,6 @@ export const updateOrder = async (req, res) => {
       console.log(`   - Added: ${changes.newItems.length}`);
       console.log(`   - Removed: ${changes.removedItems.length}`);
       console.log(`   - Updated: ${changes.updatedItems.length}`);
-      // Log actual quantity changes
-      changes.updatedItems.forEach(item => {
-        console.log(`   - ${item.menuId}: ${item.oldQuantity} → ${item.newQuantity} (${item.newQuantity > item.oldQuantity ? '+' : ''}${item.newQuantity - item.oldQuantity})`);
-      });
     }
 
     return res.status(200).json({
@@ -410,7 +382,6 @@ export const completeOrder = async (req, res) => {
 
     const totalPrice = order.totalPrice;
 
-    // Update order to completed
     const updatedOrder = await orderModel.findByIdAndUpdate(
       id,
       { 
@@ -423,7 +394,6 @@ export const completeOrder = async (req, res) => {
       { new: true, runValidators: false }
     ).populate('menuItems.menuId', 'name price image category');
 
-    // Update revenue
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -438,7 +408,6 @@ export const completeOrder = async (req, res) => {
       { upsert: true, new: true }
     );
 
-    // Emit socket events
     const io = req.app.get("io");
     if (io) {
       io.emit("order:completed", updatedOrder);
@@ -496,7 +465,6 @@ export const cancelOrder = async (req, res) => {
       });
     }
 
-    // Update order to cancelled
     const updatedOrder = await orderModel.findByIdAndUpdate(
       id,
       { 
@@ -507,12 +475,11 @@ export const cancelOrder = async (req, res) => {
         lastUpdatedAt: null,
         cancellationReason: reason || 'No reason provided',
         cancelledAt: new Date(),
-        cancelledBy: req.admin._id
+        cancelledBy: req.admin._id || 'admin'  // ✅ String
       },
       { new: true, runValidators: false }
     ).populate('menuItems.menuId', 'name price image category');
 
-    // Emit socket events
     const io = req.app.get("io");
     if (io) {
       io.to('kitchen').emit("order:cancelled", updatedOrder);
@@ -552,7 +519,6 @@ export const deleteOrder = async (req, res) => {
       });
     }
 
-    // Prevent deleting completed orders (optional - remove if you want to allow)
     if (order.status === 'completed') {
       return res.status(400).json({
         success: false,
@@ -562,7 +528,6 @@ export const deleteOrder = async (req, res) => {
 
     await orderModel.findByIdAndDelete(id);
 
-    // Emit socket events
     const io = req.app.get("io");
     if (io) {
       io.to('kitchen').emit("order:delete", { id });
@@ -612,7 +577,6 @@ export const acknowledgeOrderUpdate = async (req, res) => {
       { new: true, runValidators: false }
     ).populate('menuItems.menuId', 'name price image category');
 
-    // Emit socket event
     const io = req.app.get("io");
     if (io) {
       io.to('kitchen').emit("order:acknowledged", { id: order._id });
@@ -635,7 +599,7 @@ export const acknowledgeOrderUpdate = async (req, res) => {
 };
 
 // ============================================
-// GET CURRENT ORDERS
+// GET CURRENT ORDERS - ✅ REMOVED populate('createdBy')
 // ============================================
 
 export const getCurrentOrders = async (req, res) => {
@@ -647,7 +611,7 @@ export const getCurrentOrders = async (req, res) => {
     if (status) {
       filter.status = status;
     } else {
-      filter.status = 'preparing'; // Default to preparing
+      filter.status = 'preparing';
     }
 
     if (tableNumber) {
@@ -657,7 +621,7 @@ export const getCurrentOrders = async (req, res) => {
     const orders = await orderModel
       .find(filter)
       .populate('menuItems.menuId', 'name price image category')
-      .populate('createdBy', 'name email')
+      // ✅ REMOVED: .populate('createdBy', 'name email')
       .sort({ createdAt: -1 });
 
     return res.status(200).json({
@@ -675,7 +639,7 @@ export const getCurrentOrders = async (req, res) => {
 };
 
 // ============================================
-// GET ORDER BY ID
+// GET ORDER BY ID - ✅ REMOVED populate('createdBy')
 // ============================================
 
 export const getOrderById = async (req, res) => {
@@ -684,9 +648,9 @@ export const getOrderById = async (req, res) => {
     
     const order = await orderModel
       .findById(id)
-      .populate('menuItems.menuId', 'name price image category')
-      .populate('createdBy', 'name email')
-      .populate('updateHistory.updatedBy', 'name');
+      .populate('menuItems.menuId', 'name price image category');
+      // ✅ REMOVED: .populate('createdBy', 'name email')
+      // ✅ REMOVED: .populate('updateHistory.updatedBy', 'name')
 
     if (!order) {
       return res.status(404).json({ 
@@ -709,7 +673,7 @@ export const getOrderById = async (req, res) => {
 };
 
 // ============================================
-// GET ORDER HISTORY
+// GET ORDER HISTORY - ✅ REMOVED populate('updatedBy')
 // ============================================
 
 export const getOrderHistory = async (req, res) => {
@@ -718,7 +682,7 @@ export const getOrderHistory = async (req, res) => {
     
     const order = await orderModel
       .findById(id)
-      .populate('updateHistory.updatedBy', 'name email')
+      // ✅ REMOVED: .populate('updateHistory.updatedBy', 'name email')
       .select('updateHistory');
 
     if (!order) {
@@ -742,7 +706,7 @@ export const getOrderHistory = async (req, res) => {
 };
 
 // ============================================
-// REVENUE FUNCTIONS
+// REVENUE FUNCTIONS (No changes needed)
 // ============================================
 
 export const getTodayRevenue = async (req, res) => {

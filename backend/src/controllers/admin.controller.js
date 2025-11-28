@@ -227,4 +227,4 @@ export const resetAdminPassword = async (req, res) => {
     console.error("Reset password error:", error);
     return res.status(500).json({ success: false, message: "Password reset failed. Please try again." });
   }
-};2
+};

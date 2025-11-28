@@ -1,35 +1,68 @@
+// mail.utils.js - FIXED VERSION
 import nodemailer from "nodemailer";
 import otpGenerator from "otp-generator";
 import env from "./env.js";
 
-// Create transporter with better configuration
-const transporter = nodemailer.createTransport({
-    service: "Gmail",
-    host: "smtp.gmail.com",
-    port: 587,
-    secure: false, // true for 465, false for other ports
-    auth: {
-        user: env.mailUser,
-        pass: env.mailPass, // Must be App Password, NOT regular password!
-    },
-    tls: {
-        rejectUnauthorized: false
-    }
-});
+// Debug
+console.log("📧 Initializing mail service...");
+console.log("- User:", env.mailUser || "❌ NOT SET");
+console.log("- Pass:", env.mailPass ? `✅ Set (${env.mailPass.length} chars)` : "❌ NOT SET");
 
-// Verify transporter on startup
+// Clean password (remove any spaces)
+const cleanPassword = env.mailPass?.replace(/\s/g, '');
+
+// Create transporter
+let transporter = null;
+
+try {
+    if (!env.mailUser || !cleanPassword) {
+        throw new Error("Missing email credentials");
+    }
+    
+    // ✅ FIXED: createTransport (NOT createTransporter)
+    transporter = nodemailer.createTransport({
+        service: "gmail",
+        host: "smtp.gmail.com",
+        port: 587,
+        secure: false,
+        auth: {
+            user: env.mailUser,
+            pass: cleanPassword,
+        },
+        tls: {
+            rejectUnauthorized: false
+        }
+    });
+    
+    console.log("✅ Transporter created successfully");
+} catch (error) {
+    console.error("❌ Failed to create transporter:", error.message);
+}
+
+// Verify transporter
 const verifyTransporter = async () => {
+    if (!transporter) {
+        console.error("❌ No transporter available");
+        return false;
+    }
+    
     try {
         await transporter.verify();
-        console.log("✅ Mail server is ready to send emails");
+        console.log("✅ Mail server connected successfully");
+        console.log("✅ Ready to send emails from:", env.mailUser);
         return true;
     } catch (error) {
-        console.error("❌ Mail server connection failed:", error.message);
+        console.error("❌ Mail server connection failed:");
+        console.error("  Error:", error.message);
+        
+        if (error.message.includes("Invalid login")) {
+            console.error("  💡 Fix: Check app password (no spaces!)");
+        }
         return false;
     }
 };
 
-// Call verification on module load
+// Initialize verification
 verifyTransporter();
 
 const generateOTP = () => {
@@ -42,6 +75,12 @@ const generateOTP = () => {
 };
 
 const sendOTP = async (email, otp, purpose) => {
+    if (!transporter) {
+        throw new Error("Email service not configured. Check EMAIL_USER and EMAIL_PASS.");
+    }
+
+    console.log(`📤 Sending OTP to ${email} for ${purpose}`);
+    
     const subjects = {
         signup: "Verify Your Email - NANGFA ETHNIC RESTAURANT",
         login: "Login Verification Code - NANGFA ETHNIC RESTAURANT",
@@ -52,35 +91,24 @@ const sendOTP = async (email, otp, purpose) => {
         from: `"NANGFA ETHNIC RESTAURANT" <${env.mailUser}>`,
         to: email,
         subject: subjects[purpose] || "Verification Code - NANGFA",
-        text: `Your OTP for ${purpose} is: ${otp}\n\nThis code will expire in 10 minutes.\n\nIf you didn't request this, please ignore this email.\n\n- NANGFA Team`,
+        text: `Your OTP for ${purpose} is: ${otp}\n\nThis code will expire in 10 minutes.`,
         html: `
-            <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px;">
-                <h2 style="color: #333;">NANGFA ETHNIC RESTAURANT</h2>
-                <p>Your OTP for <strong>${purpose}</strong> is:</p>
-                <h1 style="color: #007bff; font-size: 32px; letter-spacing: 5px;">${otp}</h1>
-                <p>This code will expire in <strong>10 minutes</strong>.</p>
-                <hr>
-                <p style="color: #666; font-size: 12px;">If you didn't request this, please ignore this email.</p>
+            <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; border: 1px solid #ddd; border-radius: 10px;">
+                <h2 style="color: #333; text-align: center;">NANGFA ETHNIC RESTAURANT</h2>
+                <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+                    <p style="margin: 0 0 10px 0;">Your OTP for <strong>${purpose}</strong> is:</p>
+                    <h1 style="color: #007bff; font-size: 36px; letter-spacing: 8px; text-align: center; margin: 20px 0;">${otp}</h1>
+                    <p style="text-align: center; color: #666;">This code will expire in <strong>10 minutes</strong></p>
+                </div>
+                <p style="color: #999; font-size: 12px; text-align: center;">If you didn't request this, please ignore this email.</p>
             </div>
         `
     };
 
-    try {
-        const info = await transporter.sendMail(mailOptions);
-        console.log("✅ Email sent successfully:", info.messageId);
-        return { success: true, messageId: info.messageId };
-    } catch (error) {
-        // Log the ACTUAL error for debugging
-        console.error("❌ Failed to send email:", {
-            message: error.message,
-            code: error.code,
-            command: error.command,
-            responseCode: error.responseCode
-        });
-        
-        // Throw with more details
-        throw new Error(`Failed to send OTP email: ${error.message}`);
-    }
+    const info = await transporter.sendMail(mailOptions);
+    console.log("✅ Email sent successfully!");
+    console.log("  Message ID:", info.messageId);
+    return { success: true, messageId: info.messageId };
 };
 
 export { generateOTP, sendOTP, verifyTransporter };

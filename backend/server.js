@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import http from "http";
 import mongoose from "mongoose";
-import { setupSocket } from "./src/utils/socket.utils.js";  // ✅ Import your socket setup
+import { setupSocket } from "./src/utils/socket.utils.js";  
 
 // Load environment variables
 dotenv.config();

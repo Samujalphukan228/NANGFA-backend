@@ -1,11 +1,10 @@
+// order.controller.js
 import { orderModel } from "../models/order.model.js";
 import { menuModel } from "../models/menu.model.js";
 import { revenueModel } from "../models/revenue.model.js";
 
 
-/**
- * Validate and calculate order total
- */
+
 const validateAndCalculateTotal = async (menuItems) => {
   let totalPrice = 0;
   const validatedItems = [];
@@ -33,9 +32,55 @@ const validateAndCalculateTotal = async (menuItems) => {
   return { totalPrice, validatedItems };
 };
 
-/**
- * Compare old and new orders to find changes
- */
+const normalizeTableNumber = (tableNumber) => {
+  // Handle null/undefined
+  if (tableNumber === null || tableNumber === undefined) {
+    return [];
+  }
+  
+  // If already an array, clean and return
+  if (Array.isArray(tableNumber)) {
+    return tableNumber
+      .filter(t => t !== null && t !== undefined && t !== '')
+      .map(t => parseInt(t))
+      .filter(t => !isNaN(t))
+      .sort((a, b) => a - b);  // Sort ascending
+  }
+  
+  // If string like "4,5" or "4, 5"
+  if (typeof tableNumber === 'string') {
+    if (tableNumber.trim() === '') {
+      return [];
+    }
+    if (tableNumber.includes(',')) {
+      return tableNumber
+        .split(',')
+        .map(t => parseInt(t.trim()))
+        .filter(t => !isNaN(t))
+        .sort((a, b) => a - b);
+    }
+    const num = parseInt(tableNumber.trim());
+    return isNaN(num) ? [] : [num];
+  }
+  
+  // If single number
+  if (typeof tableNumber === 'number') {
+    return isNaN(tableNumber) ? [] : [tableNumber];
+  }
+  
+  return [];
+};
+
+const formatTableDisplay = (tableNumbers) => {
+  if (!tableNumbers || tableNumbers.length === 0) {
+    return 'No Table';
+  }
+  if (tableNumbers.length === 1) {
+    return `Table ${tableNumbers[0]}`;
+  }
+  return `Tables ${tableNumbers.join(', ')}`;
+};
+
 const findOrderChanges = (oldOrder, newMenuItems) => {
   const changes = {
     newItems: [],
@@ -46,6 +91,7 @@ const findOrderChanges = (oldOrder, newMenuItems) => {
     updated: []
   };
 
+  // Create map of old items
   const oldItemsMap = new Map();
   oldOrder.menuItems.forEach(item => {
     const menuId = item.menuId._id ? item.menuId._id.toString() : item.menuId.toString();
@@ -55,6 +101,7 @@ const findOrderChanges = (oldOrder, newMenuItems) => {
     });
   });
 
+  // Create map of new items
   const newItemsMap = new Map();
   newMenuItems.forEach(item => {
     const menuId = item.menuId.toString();
@@ -64,6 +111,7 @@ const findOrderChanges = (oldOrder, newMenuItems) => {
     });
   });
 
+  // Find new items (in new but not in old)
   newItemsMap.forEach((newItem, menuId) => {
     if (!oldItemsMap.has(menuId)) {
       changes.newItems.push(menuId);
@@ -76,6 +124,7 @@ const findOrderChanges = (oldOrder, newMenuItems) => {
     }
   });
 
+  // Find removed items (in old but not in new)
   oldItemsMap.forEach((oldItem, menuId) => {
     if (!newItemsMap.has(menuId)) {
       changes.removedItems.push({
@@ -92,6 +141,7 @@ const findOrderChanges = (oldOrder, newMenuItems) => {
     }
   });
 
+  // Find updated items (quantity changed)
   newItemsMap.forEach((newItem, menuId) => {
     const oldItem = oldItemsMap.get(menuId);
     if (oldItem && oldItem.quantity !== newItem.quantity) {
@@ -115,14 +165,26 @@ const findOrderChanges = (oldOrder, newMenuItems) => {
   return changes;
 };
 
-// ============================================
-// CREATE ORDER
-// ============================================
+const getAdminId = (req) => {
+  if (req.admin) {
+    if (req.admin._id) {
+      return req.admin._id.toString();
+    }
+    if (req.admin.id) {
+      return req.admin.id.toString();
+    }
+    if (req.admin.name) {
+      return req.admin.name;
+    }
+  }
+  return 'admin';
+};
 
 export const createOrder = async (req, res) => {
   try {
     const { menuItems, tableNumber } = req.body;
 
+    // Validate menu items
     if (!menuItems || menuItems.length === 0) {
       return res.status(400).json({ 
         success: false, 
@@ -130,16 +192,21 @@ export const createOrder = async (req, res) => {
       });
     }
 
+    // Validate and calculate total
     const { totalPrice, validatedItems } = await validateAndCalculateTotal(menuItems);
 
+    // ✅ Normalize tableNumber to array
+    const normalizedTableNumber = normalizeTableNumber(tableNumber);
+
+    // Create order data
     const orderData = {
       menuItems: menuItems.map(item => ({
         menuId: item.menuId,
         quantity: item.quantity
       })),
       totalPrice,
-      tableNumber: tableNumber || null,
-      createdBy: req.admin._id || 'admin',
+      tableNumber: normalizedTableNumber,
+      createdBy: getAdminId(req),
       status: 'preparing',
       updatedItems: [],
       newItems: [],
@@ -148,21 +215,23 @@ export const createOrder = async (req, res) => {
       updateHistory: []
     };
 
+    // Save order
     const order = new orderModel(orderData);
     await order.save();
 
+    // Populate menu details
     await order.populate('menuItems.menuId', 'name price image category');
 
+    // Emit socket event
     const io = req.app.get("io");
     if (io) {
-      // ✅ FIX: Emit to BOTH kitchen AND admin rooms, plus globally
       console.log('📤 Emitting order:new to all rooms');
       
-      io.to('kitchen').emit("order:new", order);  // Kitchen displays
-      io.to('admin').emit("order:new", order);    // Admin dashboards
-      io.emit("order:new", order);                 // Global (all connected)
+      io.to('kitchen').emit("order:new", order);
+      io.to('admin').emit("order:new", order);
+      io.emit("order:new", order);
       
-      console.log(`✅ Order created and emitted: ${order._id}`);
+      console.log(`✅ Order created: ${order._id}, ${formatTableDisplay(normalizedTableNumber)}, Total: ₹${totalPrice}`);
     } else {
       console.error('❌ Socket.io instance not found!');
     }
@@ -180,15 +249,13 @@ export const createOrder = async (req, res) => {
     });
   }
 };
-// ============================================
-// UPDATE ORDER
-// ============================================
 
 export const updateOrder = async (req, res) => {
   try {
     const { id } = req.params;
     const { menuItems, tableNumber, status } = req.body;
 
+    // Find existing order
     const order = await orderModel
       .findById(id)
       .populate('menuItems.menuId', 'name price image category');
@@ -200,6 +267,7 @@ export const updateOrder = async (req, res) => {
       });
     }
 
+    // Cannot update completed order
     if (order.status === 'completed') {
       return res.status(400).json({
         success: false,
@@ -211,6 +279,7 @@ export const updateOrder = async (req, res) => {
     let changes = null;
     let totalPrice = order.totalPrice;
 
+    // Handle menu items update
     if (menuItems && menuItems.length >= 0) {
       if (menuItems.length === 0) {
         return res.status(400).json({
@@ -219,27 +288,33 @@ export const updateOrder = async (req, res) => {
         });
       }
 
+      // Validate and calculate new total
       const { totalPrice: newTotal, validatedItems } = await validateAndCalculateTotal(menuItems);
       totalPrice = newTotal;
 
+      // Find what changed
       changes = findOrderChanges(order, validatedItems);
 
+      // Update menu items
       updateData.menuItems = menuItems.map(item => ({
         menuId: item.menuId,
         quantity: item.quantity
       }));
       updateData.totalPrice = totalPrice;
       
+      // Track changes
       updateData.updatedItems = changes.updatedItems.map(item => ({
         menuId: item.menuId,
         oldQuantity: item.oldQuantity,
         newQuantity: item.newQuantity,
-        change: item.newQuantity - item.oldQuantity
+        change: item.newQuantity - item.oldQuantity,
+        type: item.type
       }));
       
       updateData.newItems = changes.newItems;
       updateData.removedItems = changes.removedItems;
 
+      // Add to update history if there are changes
       if (changes.newItems.length > 0 || 
           changes.removedItems.length > 0 || 
           changes.updatedItems.length > 0) {
@@ -248,7 +323,7 @@ export const updateOrder = async (req, res) => {
         updateData.$push = {
           updateHistory: {
             updatedAt: new Date(),
-            updatedBy: req.admin._id || 'admin',  // ✅ String
+            updatedBy: getAdminId(req),
             changes: {
               added: changes.added,
               removed: changes.removed,
@@ -259,10 +334,12 @@ export const updateOrder = async (req, res) => {
       }
     }
 
+    // ✅ Handle tableNumber update
     if (tableNumber !== undefined) {
-      updateData.tableNumber = tableNumber;
+      updateData.tableNumber = normalizeTableNumber(tableNumber);
     }
 
+    // Handle status update
     if (status) {
       if (!['preparing', 'completed', 'cancelled'].includes(status)) {
         return res.status(400).json({
@@ -272,6 +349,7 @@ export const updateOrder = async (req, res) => {
       }
       updateData.status = status;
 
+      // Clear change tracking on completion/cancellation
       if (status === 'completed' || status === 'cancelled') {
         updateData.updatedItems = [];
         updateData.newItems = [];
@@ -279,10 +357,12 @@ export const updateOrder = async (req, res) => {
       }
     }
 
+    // Apply update
     const updatedOrder = await orderModel
       .findByIdAndUpdate(id, updateData, { new: true, runValidators: false })
       .populate('menuItems.menuId', 'name price image category');
 
+    // Emit socket events
     const io = req.app.get("io");
     if (io) {
       const socketData = {
@@ -293,42 +373,56 @@ export const updateOrder = async (req, res) => {
               menuId: item.menuId.toString(),
               oldQuantity: item.oldQuantity,
               newQuantity: item.newQuantity,
-              change: item.change || (item.newQuantity - item.oldQuantity)
+              change: item.change || (item.newQuantity - item.oldQuantity),
+              type: item.type
             };
           }
           return { menuId: item.toString() };
         }),
         newItems: updatedOrder.newItems.map(id => id.toString()),
-        removedItems: updatedOrder.removedItems
+        removedItems: updatedOrder.removedItems,
+        tableDisplayText: formatTableDisplay(updatedOrder.tableNumber)
       };
 
       io.to('kitchen').emit("order:update", socketData);
+      io.to('admin').emit("order:update", socketData);
       io.emit("order:update", socketData);
 
-      console.log('📤 Emitting order:update with changes:', {
+      console.log('📤 Emitting order:update:', {
         orderId: id,
-        updatedItems: socketData.updatedItems,
-        newItems: socketData.newItems.length,
-        removedItems: socketData.removedItems.length
+        tableNumber: updatedOrder.tableNumber,
+        updatedItemsCount: socketData.updatedItems.length,
+        newItemsCount: socketData.newItems.length,
+        removedItemsCount: socketData.removedItems.length
       });
 
+      // Emit specific events for kitchen
       if (changes) {
         if (changes.newItems.length > 0) {
           io.to('kitchen').emit("order:items-added", {
             orderId: id,
-            items: changes.added
+            items: changes.added,
+            tableNumber: updatedOrder.tableNumber
           });
         }
         if (changes.removedItems.length > 0) {
           io.to('kitchen').emit("order:items-removed", {
             orderId: id,
-            items: changes.removed
+            items: changes.removed,
+            tableNumber: updatedOrder.tableNumber
+          });
+        }
+        if (changes.updatedItems.length > 0) {
+          io.to('kitchen').emit("order:items-updated", {
+            orderId: id,
+            items: changes.updated,
+            tableNumber: updatedOrder.tableNumber
           });
         }
       }
     }
 
-    console.log(`✅ Order updated: ${id}`);
+    console.log(`✅ Order updated: ${id}, ${formatTableDisplay(updatedOrder.tableNumber)}`);
     if (changes) {
       console.log(`   - Added: ${changes.newItems.length}`);
       console.log(`   - Removed: ${changes.removedItems.length}`);
@@ -354,14 +448,11 @@ export const updateOrder = async (req, res) => {
   }
 };
 
-// ============================================
-// COMPLETE ORDER
-// ============================================
-
 export const completeOrder = async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Find order
     const order = await orderModel
       .findById(id)
       .populate('menuItems.menuId', 'name price image category');
@@ -380,8 +471,16 @@ export const completeOrder = async (req, res) => {
       });
     }
 
+    if (order.status === 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot complete a cancelled order"
+      });
+    }
+
     const totalPrice = order.totalPrice;
 
+    // Update order status
     const updatedOrder = await orderModel.findByIdAndUpdate(
       id,
       { 
@@ -390,10 +489,13 @@ export const completeOrder = async (req, res) => {
         newItems: [],
         removedItems: [],
         lastUpdatedAt: null,
+        completedAt: new Date(),
+        completedBy: getAdminId(req)
       },
       { new: true, runValidators: false }
     ).populate('menuItems.menuId', 'name price image category');
 
+    // Update revenue
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -408,14 +510,21 @@ export const completeOrder = async (req, res) => {
       { upsert: true, new: true }
     );
 
+    // Emit socket events
     const io = req.app.get("io");
     if (io) {
-      io.emit("order:completed", updatedOrder);
-      io.to('kitchen').emit("order:completed", updatedOrder);
-      io.emit("revenue:update");
+      const socketData = {
+        ...updatedOrder.toObject(),
+        tableDisplayText: formatTableDisplay(updatedOrder.tableNumber)
+      };
+      
+      io.emit("order:completed", socketData);
+      io.to('kitchen').emit("order:completed", socketData);
+      io.to('admin').emit("order:completed", socketData);
+      io.emit("revenue:update", { amount: totalPrice });
     }
 
-    console.log(`✅ Order completed: ${id} (₹${totalPrice})`);
+    console.log(`✅ Order completed: ${id}, ${formatTableDisplay(order.tableNumber)}, Total: ₹${totalPrice}`);
 
     return res.status(200).json({
       success: true,
@@ -431,15 +540,12 @@ export const completeOrder = async (req, res) => {
   }
 };
 
-// ============================================
-// CANCEL ORDER
-// ============================================
-
 export const cancelOrder = async (req, res) => {
   try {
     const { id } = req.params;
     const { reason } = req.body;
 
+    // Find order
     const order = await orderModel
       .findById(id)
       .populate('menuItems.menuId', 'name price image category');
@@ -465,6 +571,7 @@ export const cancelOrder = async (req, res) => {
       });
     }
 
+    // Update order status
     const updatedOrder = await orderModel.findByIdAndUpdate(
       id,
       { 
@@ -475,18 +582,25 @@ export const cancelOrder = async (req, res) => {
         lastUpdatedAt: null,
         cancellationReason: reason || 'No reason provided',
         cancelledAt: new Date(),
-        cancelledBy: req.admin._id || 'admin'  // ✅ String
+        cancelledBy: getAdminId(req)
       },
       { new: true, runValidators: false }
     ).populate('menuItems.menuId', 'name price image category');
 
+    // Emit socket events
     const io = req.app.get("io");
     if (io) {
-      io.to('kitchen').emit("order:cancelled", updatedOrder);
-      io.emit("order:cancelled", updatedOrder);
+      const socketData = {
+        ...updatedOrder.toObject(),
+        tableDisplayText: formatTableDisplay(updatedOrder.tableNumber)
+      };
+      
+      io.to('kitchen').emit("order:cancelled", socketData);
+      io.to('admin').emit("order:cancelled", socketData);
+      io.emit("order:cancelled", socketData);
     }
 
-    console.log(`❌ Order cancelled: ${id}`);
+    console.log(`❌ Order cancelled: ${id}, ${formatTableDisplay(order.tableNumber)}, Reason: ${reason || 'Not provided'}`);
 
     return res.status(200).json({
       success: true,
@@ -501,10 +615,6 @@ export const cancelOrder = async (req, res) => {
     });
   }
 };
-
-// ============================================
-// DELETE ORDER
-// ============================================
 
 export const deleteOrder = async (req, res) => {
   try {
@@ -528,13 +638,15 @@ export const deleteOrder = async (req, res) => {
 
     await orderModel.findByIdAndDelete(id);
 
+    // Emit socket events
     const io = req.app.get("io");
     if (io) {
-      io.to('kitchen').emit("order:delete", { id });
-      io.emit("order:delete", { id });
+      io.to('kitchen').emit("order:delete", { id, tableNumber: order.tableNumber });
+      io.to('admin').emit("order:delete", { id, tableNumber: order.tableNumber });
+      io.emit("order:delete", { id, tableNumber: order.tableNumber });
     }
 
-    console.log(`🗑️ Order deleted: ${id}`);
+    console.log(`🗑️ Order deleted: ${id}, ${formatTableDisplay(order.tableNumber)}`);
 
     return res.status(200).json({
       success: true,
@@ -548,10 +660,6 @@ export const deleteOrder = async (req, res) => {
     });
   }
 };
-
-// ============================================
-// ACKNOWLEDGE ORDER UPDATE
-// ============================================
 
 export const acknowledgeOrderUpdate = async (req, res) => {
   try {
@@ -577,9 +685,17 @@ export const acknowledgeOrderUpdate = async (req, res) => {
       { new: true, runValidators: false }
     ).populate('menuItems.menuId', 'name price image category');
 
+    // Emit socket event
     const io = req.app.get("io");
     if (io) {
-      io.to('kitchen').emit("order:acknowledged", { id: order._id });
+      io.to('kitchen').emit("order:acknowledged", { 
+        id: order._id, 
+        tableNumber: order.tableNumber 
+      });
+      io.to('admin').emit("order:acknowledged", { 
+        id: order._id, 
+        tableNumber: order.tableNumber 
+      });
     }
 
     console.log(`✅ Order acknowledged: ${id}`);
@@ -598,36 +714,46 @@ export const acknowledgeOrderUpdate = async (req, res) => {
   }
 };
 
-// ============================================
-// GET CURRENT ORDERS - ✅ REMOVED populate('createdBy')
-// ============================================
-
 export const getCurrentOrders = async (req, res) => {
   try {
     const { status, tableNumber } = req.query;
 
     let filter = {};
     
+    // Filter by status
     if (status) {
-      filter.status = status;
+      if (status === 'all') {
+        // No status filter - get all
+      } else {
+        filter.status = status;
+      }
     } else {
       filter.status = 'preparing';
     }
 
+    // ✅ Filter by tableNumber (works with array)
     if (tableNumber) {
-      filter.tableNumber = parseInt(tableNumber);
+      const tableNum = parseInt(tableNumber);
+      if (!isNaN(tableNum)) {
+        filter.tableNumber = tableNum;  // MongoDB searches in array automatically
+      }
     }
 
     const orders = await orderModel
       .find(filter)
       .populate('menuItems.menuId', 'name price image category')
-      // ✅ REMOVED: .populate('createdBy', 'name email')
       .sort({ createdAt: -1 });
+
+    // Add display text for tables
+    const ordersWithDisplay = orders.map(order => ({
+      ...order.toObject(),
+      tableDisplayText: formatTableDisplay(order.tableNumber)
+    }));
 
     return res.status(200).json({
       success: true,
       count: orders.length,
-      orders,
+      orders: ordersWithDisplay,
     });
   } catch (error) {
     console.error("❌ Get orders error:", error);
@@ -638,9 +764,176 @@ export const getCurrentOrders = async (req, res) => {
   }
 };
 
-// ============================================
-// GET ORDER BY ID - ✅ REMOVED populate('createdBy')
-// ============================================
+export const getOrdersByTables = async (req, res) => {
+  try {
+    const { tables, status } = req.query;
+
+    if (!tables) {
+      return res.status(400).json({
+        success: false,
+        message: "Tables parameter is required (e.g., tables=4,5)"
+      });
+    }
+
+    // Parse tables: "4,5" → [4, 5]
+    const tableNumbers = tables
+      .split(',')
+      .map(t => parseInt(t.trim()))
+      .filter(t => !isNaN(t));
+
+    if (tableNumbers.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid table numbers provided"
+      });
+    }
+
+    let filter = {
+      tableNumber: { $in: tableNumbers }  // Orders with ANY of these tables
+    };
+
+    if (status && status !== 'all') {
+      filter.status = status;
+    }
+
+    const orders = await orderModel
+      .find(filter)
+      .populate('menuItems.menuId', 'name price image category')
+      .sort({ createdAt: -1 });
+
+    const ordersWithDisplay = orders.map(order => ({
+      ...order.toObject(),
+      tableDisplayText: formatTableDisplay(order.tableNumber)
+    }));
+
+    return res.status(200).json({
+      success: true,
+      count: orders.length,
+      searchedTables: tableNumbers,
+      orders: ordersWithDisplay,
+    });
+  } catch (error) {
+    console.error("❌ Get orders by tables error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to fetch orders"
+    });
+  }
+};
+
+export const getOrdersByCombinedTables = async (req, res) => {
+  try {
+    const { tables, status } = req.query;
+
+    if (!tables) {
+      return res.status(400).json({
+        success: false,
+        message: "Tables parameter is required (e.g., tables=4,5)"
+      });
+    }
+
+    // Parse tables: "4,5" → [4, 5]
+    const tableNumbers = tables
+      .split(',')
+      .map(t => parseInt(t.trim()))
+      .filter(t => !isNaN(t));
+
+    if (tableNumbers.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid table numbers provided"
+      });
+    }
+
+    let filter = {
+      tableNumber: { $all: tableNumbers }  // Orders with ALL these tables
+    };
+
+    if (status && status !== 'all') {
+      filter.status = status;
+    }
+
+    const orders = await orderModel
+      .find(filter)
+      .populate('menuItems.menuId', 'name price image category')
+      .sort({ createdAt: -1 });
+
+    const ordersWithDisplay = orders.map(order => ({
+      ...order.toObject(),
+      tableDisplayText: formatTableDisplay(order.tableNumber)
+    }));
+
+    return res.status(200).json({
+      success: true,
+      count: orders.length,
+      combinedTables: tableNumbers,
+      orders: ordersWithDisplay,
+    });
+  } catch (error) {
+    console.error("❌ Get orders by combined tables error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to fetch orders"
+    });
+  }
+};
+
+export const getOrdersByExactTables = async (req, res) => {
+  try {
+    const { tables, status } = req.query;
+
+    if (!tables) {
+      return res.status(400).json({
+        success: false,
+        message: "Tables parameter is required"
+      });
+    }
+
+    const tableNumbers = tables
+      .split(',')
+      .map(t => parseInt(t.trim()))
+      .filter(t => !isNaN(t))
+      .sort((a, b) => a - b);
+
+    if (tableNumbers.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid table numbers provided"
+      });
+    }
+
+    let filter = {
+      tableNumber: tableNumbers  // Exact match
+    };
+
+    if (status && status !== 'all') {
+      filter.status = status;
+    }
+
+    const orders = await orderModel
+      .find(filter)
+      .populate('menuItems.menuId', 'name price image category')
+      .sort({ createdAt: -1 });
+
+    const ordersWithDisplay = orders.map(order => ({
+      ...order.toObject(),
+      tableDisplayText: formatTableDisplay(order.tableNumber)
+    }));
+
+    return res.status(200).json({
+      success: true,
+      count: orders.length,
+      exactTables: tableNumbers,
+      orders: ordersWithDisplay,
+    });
+  } catch (error) {
+    console.error("❌ Get orders by exact tables error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to fetch orders"
+    });
+  }
+};
 
 export const getOrderById = async (req, res) => {
   try {
@@ -649,8 +942,6 @@ export const getOrderById = async (req, res) => {
     const order = await orderModel
       .findById(id)
       .populate('menuItems.menuId', 'name price image category');
-      // ✅ REMOVED: .populate('createdBy', 'name email')
-      // ✅ REMOVED: .populate('updateHistory.updatedBy', 'name')
 
     if (!order) {
       return res.status(404).json({ 
@@ -661,7 +952,10 @@ export const getOrderById = async (req, res) => {
 
     return res.status(200).json({ 
       success: true, 
-      order 
+      order: {
+        ...order.toObject(),
+        tableDisplayText: formatTableDisplay(order.tableNumber)
+      }
     });
   } catch (error) {
     console.error("❌ Get order error:", error);
@@ -672,18 +966,13 @@ export const getOrderById = async (req, res) => {
   }
 };
 
-// ============================================
-// GET ORDER HISTORY - ✅ REMOVED populate('updatedBy')
-// ============================================
-
 export const getOrderHistory = async (req, res) => {
   try {
     const { id } = req.params;
     
     const order = await orderModel
       .findById(id)
-      // ✅ REMOVED: .populate('updateHistory.updatedBy', 'name email')
-      .select('updateHistory');
+      .select('updateHistory tableNumber status createdAt');
 
     if (!order) {
       return res.status(404).json({ 
@@ -693,7 +982,12 @@ export const getOrderHistory = async (req, res) => {
     }
 
     return res.status(200).json({ 
-      success: true, 
+      success: true,
+      orderId: id,
+      tableNumber: order.tableNumber,
+      tableDisplayText: formatTableDisplay(order.tableNumber),
+      status: order.status,
+      createdAt: order.createdAt,
       history: order.updateHistory 
     });
   } catch (error) {
@@ -705,9 +999,71 @@ export const getOrderHistory = async (req, res) => {
   }
 };
 
-// ============================================
-// REVENUE FUNCTIONS (No changes needed)
-// ============================================
+export const getAllOrders = async (req, res) => {
+  try {
+    const { page = 1, limit = 20, status, tableNumber, startDate, endDate } = req.query;
+
+    let filter = {};
+
+    // Status filter
+    if (status && status !== 'all') {
+      filter.status = status;
+    }
+
+    // Table filter
+    if (tableNumber) {
+      const tableNum = parseInt(tableNumber);
+      if (!isNaN(tableNum)) {
+        filter.tableNumber = tableNum;
+      }
+    }
+
+    // Date range filter
+    if (startDate || endDate) {
+      filter.createdAt = {};
+      if (startDate) {
+        filter.createdAt.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        filter.createdAt.$lte = end;
+      }
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [orders, total] = await Promise.all([
+      orderModel
+        .find(filter)
+        .populate('menuItems.menuId', 'name price image category')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      orderModel.countDocuments(filter)
+    ]);
+
+    const ordersWithDisplay = orders.map(order => ({
+      ...order.toObject(),
+      tableDisplayText: formatTableDisplay(order.tableNumber)
+    }));
+
+    return res.status(200).json({
+      success: true,
+      count: orders.length,
+      total,
+      page: parseInt(page),
+      totalPages: Math.ceil(total / parseInt(limit)),
+      orders: ordersWithDisplay,
+    });
+  } catch (error) {
+    console.error("❌ Get all orders error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to fetch orders"
+    });
+  }
+};
 
 export const getTodayRevenue = async (req, res) => {
   try {
@@ -718,6 +1074,7 @@ export const getTodayRevenue = async (req, res) => {
 
     return res.status(200).json({
       success: true,
+      date: today,
       revenue: revenue ? revenue.amount : 0,
       orderCount: revenue ? revenue.orderCount : 0,
     });
@@ -787,6 +1144,8 @@ export const getRevenueByDateRange = async (req, res) => {
 
     return res.status(200).json({
       success: true,
+      startDate: start,
+      endDate: end,
       totalRevenue,
       totalOrders,
       dailyRevenues: revenues,
@@ -796,6 +1155,66 @@ export const getRevenueByDateRange = async (req, res) => {
     return res.status(500).json({ 
       success: false, 
       message: "Failed to fetch revenue data"
+    });
+  }
+};
+
+export const getRevenueStats = async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // This week
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - today.getDay());
+
+    // This month
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+
+    // Get all stats in parallel
+    const [todayRevenue, weekRevenue, monthRevenue, totalRevenue] = await Promise.all([
+      // Today
+      revenueModel.findOne({ date: today }),
+      // This week
+      revenueModel.aggregate([
+        { $match: { date: { $gte: weekStart } } },
+        { $group: { _id: null, amount: { $sum: "$amount" }, orders: { $sum: "$orderCount" } } }
+      ]),
+      // This month
+      revenueModel.aggregate([
+        { $match: { date: { $gte: monthStart } } },
+        { $group: { _id: null, amount: { $sum: "$amount" }, orders: { $sum: "$orderCount" } } }
+      ]),
+      // All time
+      revenueModel.aggregate([
+        { $group: { _id: null, amount: { $sum: "$amount" }, orders: { $sum: "$orderCount" } } }
+      ])
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      today: {
+        revenue: todayRevenue?.amount || 0,
+        orders: todayRevenue?.orderCount || 0
+      },
+      thisWeek: {
+        revenue: weekRevenue[0]?.amount || 0,
+        orders: weekRevenue[0]?.orders || 0
+      },
+      thisMonth: {
+        revenue: monthRevenue[0]?.amount || 0,
+        orders: monthRevenue[0]?.orders || 0
+      },
+      allTime: {
+        revenue: totalRevenue[0]?.amount || 0,
+        orders: totalRevenue[0]?.orders || 0
+      }
+    });
+  } catch (error) {
+    console.error("❌ Get revenue stats error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to fetch revenue statistics"
     });
   }
 };

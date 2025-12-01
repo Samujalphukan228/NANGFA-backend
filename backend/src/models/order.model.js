@@ -7,16 +7,20 @@ const orderSchema = new mongoose.Schema({
         quantity: { type: Number, required: true, min: 1 }
     }],
     totalPrice: { type: Number, required: true, min: 0 },
-    tableNumber: { type: Number },
+    
+    // ✅ CHANGED: Array of numbers for multiple tables
+    tableNumber: [{ 
+        type: Number 
+    }],
+    
     status: { 
         type: String, 
         enum: ['preparing', 'completed', 'cancelled'],
         default: 'preparing' 
     },
     
-    // ✅ CHANGED: From ObjectId to String
     createdBy: { 
-        type: String,  // ← Changed from ObjectId
+        type: String,  
         required: true,
         default: 'admin'
     },
@@ -41,16 +45,20 @@ const orderSchema = new mongoose.Schema({
     }],
     lastUpdatedAt: { type: Date, default: null },
     
-    // ✅ CHANGED: updatedBy also to String
     updateHistory: [{  
         updatedAt: { type: Date, default: Date.now },
-        updatedBy: { type: String },  // ← Changed from ObjectId
+        updatedBy: { type: String },
         changes: {
             added: [{ menuId: String, name: String, quantity: Number }],
             removed: [{ menuId: String, name: String, quantity: Number }],
             updated: [{ menuId: String, name: String, oldQuantity: Number, newQuantity: Number }]
         }
     }],
+    
+    // ✅ Additional fields for cancellation
+    cancellationReason: { type: String },
+    cancelledAt: { type: Date },
+    cancelledBy: { type: String },
     
     expiresAt: { type: Date, default: () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }
 }, {

@@ -1,4 +1,4 @@
-// adminCall.controller.js
+
 import { adminCallModel } from "../models/adminCall.model.js";
 
 // Get call history
@@ -6,7 +6,7 @@ export const getCallHistory = async (req, res) => {
     try {
         const calls = await adminCallModel
             .find()
-            .populate('kitchenStaff', 'name email')  // ✅ Removed admin populate
+            .populate('kitchenStaff', 'name email')  
             .sort('-createdAt')
             .limit(50);
 
@@ -30,7 +30,7 @@ export const createCallRecord = async (req, res) => {
         const { kitchenStaffId } = req.body;
 
         const call = await adminCallModel.create({
-            admin: req.admin?._id || 'admin',  // ✅ Use string 'admin'
+            admin: req.admin?._id || 'admin',  
             kitchenStaff: kitchenStaffId || null,
             status: 'ongoing'
         });

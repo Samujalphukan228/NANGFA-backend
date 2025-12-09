@@ -451,6 +451,7 @@ export const updateOrder = async (req, res) => {
 export const completeOrder = async (req, res) => {
   try {
     const { id } = req.params;
+    const { completionDate } = req.body; // Accept date from frontend
 
     // Find order
     const order = await orderModel
@@ -480,6 +481,17 @@ export const completeOrder = async (req, res) => {
 
     const totalPrice = order.totalPrice;
 
+    // Use provided date or fallback to server date
+    let revenueDate;
+    if (completionDate) {
+      revenueDate = new Date(completionDate + 'T00:00:00');
+    } else {
+      revenueDate = new Date();
+      revenueDate.setHours(0, 0, 0, 0);
+    }
+
+    console.log('📅 completeOrder - Revenue date:', revenueDate);
+
     // Update order status
     const updatedOrder = await orderModel.findByIdAndUpdate(
       id,
@@ -495,12 +507,9 @@ export const completeOrder = async (req, res) => {
       { new: true, runValidators: false }
     ).populate('menuItems.menuId', 'name price image category');
 
-    // Update revenue
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
+    // Update revenue with correct date
     await revenueModel.findOneAndUpdate(
-      { date: today },
+      { date: revenueDate },
       { 
         $inc: { 
           amount: totalPrice,
@@ -509,6 +518,8 @@ export const completeOrder = async (req, res) => {
       },
       { upsert: true, new: true }
     );
+
+    console.log('💰 Revenue updated for', revenueDate, '- Amount:', totalPrice);
 
     // Emit socket events
     const io = req.app.get("io");
@@ -521,7 +532,7 @@ export const completeOrder = async (req, res) => {
       io.emit("order:completed", socketData);
       io.to('kitchen').emit("order:completed", socketData);
       io.to('admin').emit("order:completed", socketData);
-      io.emit("revenue:update", { amount: totalPrice });
+      io.emit("revenue:update", { amount: totalPrice, date: revenueDate });
     }
 
     console.log(`✅ Order completed: ${id}, ${formatTableDisplay(order.tableNumber)}, Total: ₹${totalPrice}`);
@@ -1067,10 +1078,24 @@ export const getAllOrders = async (req, res) => {
 
 export const getTodayRevenue = async (req, res) => {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Accept date from query parameter
+    const { date } = req.query;
+    
+    let today;
+    if (date) {
+      // Use the date provided by frontend
+      today = new Date(date + 'T00:00:00');
+    } else {
+      // Fallback to server date
+      today = new Date();
+      today.setHours(0, 0, 0, 0);
+    }
+
+    console.log('📅 getTodayRevenue - Looking for date:', today);
 
     const revenue = await revenueModel.findOne({ date: today });
+
+    console.log('💰 Found revenue:', revenue?.amount || 0);
 
     return res.status(200).json({
       success: true,

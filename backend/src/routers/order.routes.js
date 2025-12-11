@@ -1,34 +1,45 @@
-// order.routes.js
 import express from "express";
 import {
-  createOrder,
-  updateOrder,
-  completeOrder,
-  cancelOrder,
-  deleteOrder,
-  acknowledgeOrderUpdate,
-  getCurrentOrders,
-  getOrdersByTables,
-  getOrdersByCombinedTables,
-  getOrdersByExactTables,
-  getOrderById,
-  getOrderHistory,
-  getAllOrders,
-  getTodayRevenue,
-  getTotalRevenue,
-  getRevenueByDateRange,
-  getRevenueStats,
+    createOrder,
+    updateOrder,
+    completeOrder,
+    cancelOrder,
+    deleteOrder,
+    acknowledgeOrderUpdate,
+    getCurrentOrders,
+    getOrdersByTables,
+    getOrdersByCombinedTables,
+    getOrdersByExactTables,
+    getOrderById,
+    getOrderHistory,
+    getAllOrders,
+    getTodayRevenue,
+    getTotalRevenue,
+    getRevenueByDateRange,
+    getRevenueStats,
+    getRevenueByCategory,
+    getTodayRevenueByCategory,
+    debugMenuCategories,
+    backfillOrderCategories
 } from "../controllers/order.controller.js";
 import { verifyAdmin } from "../middlewares/verifyAdmin.middleware.js";
 import { verifyAdminOrKitchen } from "../middlewares/verifyAdminOrKitchen.middleware.js";
 
 const orderRouter = express.Router();
 
+// Revenue Routes
 orderRouter.get("/revenue/today", verifyAdmin, getTodayRevenue);
+orderRouter.get("/revenue/today/by-category", verifyAdmin, getTodayRevenueByCategory);
 orderRouter.get("/revenue/total", verifyAdmin, getTotalRevenue);
 orderRouter.get("/revenue/range", verifyAdmin, getRevenueByDateRange);
+orderRouter.get("/revenue/by-category", verifyAdmin, getRevenueByCategory);
 orderRouter.get("/revenue/stats", verifyAdmin, getRevenueStats);
 
+// Debug / Backfill (admin-only)
+orderRouter.get("/debug/menu-categories", verifyAdmin, debugMenuCategories);
+orderRouter.post("/backfill-categories", verifyAdmin, backfillOrderCategories);
+
+// Order Routes
 orderRouter.get("/current", verifyAdminOrKitchen, getCurrentOrders);
 orderRouter.get("/all", verifyAdmin, getAllOrders);
 orderRouter.get("/by-tables", verifyAdminOrKitchen, getOrdersByTables);

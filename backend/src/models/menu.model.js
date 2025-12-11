@@ -3,8 +3,9 @@ import mongoose from 'mongoose';
 const menuSchema = new mongoose.Schema({
     name: { type: String, required: true },
     price: { type: Number, required: true, min: 0 },
-    priority: { type: Boolean, default: false }, // true = high priority item
-    date: { type: Number, default: Date.now },
-})
+    category: { type: String }, // Optional category field (no required)
+    priority: { type: Boolean, default: false },
+    date: { type: Date, default: Date.now },
+});
 
-export const menuModel = mongoose.model('Menu', menuSchema)
+export const menuModel = mongoose.model('Menu', menuSchema);

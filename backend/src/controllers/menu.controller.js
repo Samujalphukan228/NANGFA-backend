@@ -3,7 +3,7 @@ import { menuModel } from "../models/menu.model.js";
 // Add Menu
 export const addMenu = async (req, res) => {
     try {
-        const { name, price, priority } = req.body;
+        const { name, price, priority, category } = req.body; // Added category
 
         // Validation
         if (!name || !price) {
@@ -25,6 +25,11 @@ export const addMenu = async (req, res) => {
             price: Number(price),
             priority: priority === true || priority === "true" || priority === 1,
         };
+
+        // Add category if provided
+        if (category) {
+            menuData.category = category.trim();
+        }
 
         const menu = new menuModel(menuData);
         await menu.save();
@@ -69,11 +74,84 @@ export const getAllMenus = async (req, res) => {
     }
 };
 
+// Get Menus by Category (NEW)
+export const getMenusByCategory = async (req, res) => {
+    try {
+        const { category } = req.params;
+        
+        const menus = await menuModel
+            .find({ category })
+            .sort({ priority: -1, date: -1 });
+        
+        return res.status(200).json({
+            success: true,
+            count: menus.length,
+            category,
+            menus,
+        });
+    } catch (error) {
+        console.error("Get menus by category error:", error);
+        return res.status(500).json({ 
+            success: false, 
+            message: "Failed to fetch menu items. Please try again." 
+        });
+    }
+};
+
+// Get All Categories (NEW)
+export const getAllCategories = async (req, res) => {
+    try {
+        const categories = await menuModel.distinct("category");
+        
+        // Filter out null/undefined categories
+        const validCategories = categories.filter(cat => cat);
+        
+        return res.status(200).json({
+            success: true,
+            count: validCategories.length,
+            categories: validCategories,
+        });
+    } catch (error) {
+        console.error("Get categories error:", error);
+        return res.status(500).json({ 
+            success: false, 
+            message: "Failed to fetch categories. Please try again." 
+        });
+    }
+};
+
+// Get Menus Grouped by Category (NEW)
+export const getMenusGroupedByCategory = async (req, res) => {
+    try {
+        const groupedMenus = await menuModel.aggregate([
+            {
+                $group: {
+                    _id: { $ifNull: ["$category", "uncategorized"] },
+                    items: { $push: "$$ROOT" },
+                    count: { $sum: 1 }
+                }
+            },
+            { $sort: { _id: 1 } }
+        ]);
+        
+        return res.status(200).json({
+            success: true,
+            categories: groupedMenus,
+        });
+    } catch (error) {
+        console.error("Get grouped menus error:", error);
+        return res.status(500).json({ 
+            success: false, 
+            message: "Failed to fetch menu items. Please try again." 
+        });
+    }
+};
+
 // Update Menu
 export const updateMenu = async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, price, priority } = req.body;
+        const { name, price, priority, category } = req.body; // Added category
 
         const menu = await menuModel.findById(id);
         if (!menu) {
@@ -88,6 +166,9 @@ export const updateMenu = async (req, res) => {
         if (price !== undefined) menu.price = Number(price);
         if (priority !== undefined) {
             menu.priority = priority === true || priority === "true" || priority === 1;
+        }
+        if (category !== undefined) {
+            menu.category = category ? category.trim() : null; // Allow clearing category
         }
 
         await menu.save();

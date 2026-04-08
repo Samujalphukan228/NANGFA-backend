@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import http from "http";
 import mongoose from "mongoose";
-import { setupSocket } from "./src/utils/socket.utils.js";  
+import { setupSocket } from "./src/utils/socket.utils.js";
 
 // Load environment variables
 dotenv.config();
@@ -71,113 +71,133 @@ app.use((err, req, res, next) => {
 
 // Create HTTP server
 const server = http.createServer(app);
-const port = process.env.port || 5000;
+const port = process.env.PORT || 5000;
 
-// ✅ Setup Socket.io using your existing socket.utils.js
+// Setup Socket.io
 const io = setupSocket(server);
 app.set("io", io);
 
 console.log("✅ Socket.io configured with authentication and WebRTC support");
 
-// ✅ Optional: Add debug endpoint to check active rooms and connections
+// Debug endpoint
 app.get("/api/debug/socket-status", (req, res) => {
     const rooms = {};
-    
+
     io.sockets.adapter.rooms.forEach((sockets, roomName) => {
-        // Filter relevant rooms
-        if (roomName === 'kitchen' || 
-            roomName === 'admin' || 
-            roomName.startsWith('role:') || 
-            roomName.startsWith('table:')) {
+        if (
+            roomName === "kitchen" ||
+            roomName === "admin" ||
+            roomName.startsWith("role:") ||
+            roomName.startsWith("table:")
+        ) {
             rooms[roomName] = {
                 memberCount: sockets.size,
-                members: Array.from(sockets)
+                members: Array.from(sockets),
             };
         }
     });
-    
+
     res.json({
         success: true,
         timestamp: new Date().toISOString(),
         connectedSockets: io.sockets.sockets.size,
         rooms,
         features: [
-            'WebRTC Audio/Video Calls',
-            'Order Notifications',
-            'Real-time Updates',
-            'Room-based Broadcasting'
-        ]
+            "WebRTC Audio/Video Calls",
+            "Order Notifications",
+            "Real-time Updates",
+            "Room-based Broadcasting",
+        ],
     });
 });
 
-// ✅ FIXED: Graceful shutdown with async/await (Mongoose 7+ compatible)
-let isShuttingDown = false;
+// ============================================
+// ✅ FIXED: Graceful Shutdown (No more errors)
+// ============================================
+const shutdown = {
+    isShuttingDown: false,
 
-const gracefulShutdown = async (signal) => {
-    // Prevent multiple shutdown attempts (fixes infinite loop)
-    if (isShuttingDown) {
-        console.log('⏳ Shutdown already in progress...');
-        return;
-    }
-    isShuttingDown = true;
-    
-    console.log(`🛑 Starting graceful shutdown... (${signal})`);
+    async start(signal) {
+        // Prevent multiple shutdown attempts
+        if (this.isShuttingDown) {
+            console.log(`⚠️  Shutdown already in progress, ignoring ${signal}`);
+            return;
+        }
+        this.isShuttingDown = true;
 
-    // Force shutdown after 30 seconds
-    const forceTimeout = setTimeout(() => {
-        console.error('❌ Could not close connections in time, forcefully shutting down');
-        process.exit(1);
-    }, 30000);
+        console.log(`🛑 Starting graceful shutdown... (${signal})`);
 
-    try {
-        // 1. Close HTTP server
-        await new Promise((resolve, reject) => {
-            server.close((err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-        console.log('✅ HTTP server closed');
+        // Force exit after 30 seconds
+        const forceTimeout = setTimeout(() => {
+            console.error("❌ Force shutdown after 30s timeout");
+            process.exit(1);
+        }, 30000);
 
-        // 2. Close Socket.io
-        await new Promise((resolve) => {
-            io.close(() => resolve());
-        });
-        console.log('✅ Socket.io closed');
+        try {
+            // 1. Close HTTP server
+            if (server.listening) {
+                await new Promise((resolve, reject) => {
+                    server.close((err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    });
+                });
+                console.log("✅ HTTP server closed");
+            }
 
-        // 3. Close MongoDB connection (Promise-based - NO callback for Mongoose 7+)
-        await mongoose.connection.close();
-        console.log('✅ MongoDB connection closed');
+            // 2. Close Socket.io
+            if (io) {
+                await new Promise((resolve) => {
+                    io.close(() => resolve());
+                });
+                console.log("✅ Socket.io closed");
+            }
 
-        clearTimeout(forceTimeout);
-        console.log('👋 Graceful shutdown completed');
-        process.exit(0);
-    } catch (err) {
-        console.error('❌ Error during shutdown:', err);
-        clearTimeout(forceTimeout);
-        process.exit(1);
-    }
+            // 3. Close MongoDB (Promise-based for Mongoose 7+)
+            if (mongoose.connection.readyState === 1) {
+                await mongoose.connection.close();
+                console.log("✅ MongoDB connection closed");
+            }
+
+            clearTimeout(forceTimeout);
+            console.log("👋 Graceful shutdown completed");
+            process.exit(0);
+        } catch (err) {
+            console.error("❌ Shutdown error:", err.message);
+            clearTimeout(forceTimeout);
+            process.exit(1);
+        }
+    },
 };
 
-// Handle process signals
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+// ✅ Use .once() - runs only ONE time per signal
+process.once("SIGTERM", () => shutdown.start("SIGTERM"));
+process.once("SIGINT", () => shutdown.start("SIGINT"));
 
-process.on('uncaughtException', (error) => {
-    console.error('💥 Uncaught Exception:', error);
-    gracefulShutdown('uncaughtException');
+// ✅ Error handlers - just exit, don't call shutdown (prevents infinite loop)
+process.on("uncaughtException", (error) => {
+    console.error("💥 Uncaught Exception:", error);
+    process.exit(1);
 });
 
-process.on('unhandledRejection', (error) => {
-    console.error('💥 Unhandled Rejection:', error);
-    gracefulShutdown('unhandledRejection');
+process.on("unhandledRejection", (reason) => {
+    // Ignore errors during shutdown
+    if (shutdown.isShuttingDown) {
+        console.log("⚠️  Ignoring rejection during shutdown");
+        return;
+    }
+    console.error("💥 Unhandled Rejection:", reason);
+    process.exit(1);
 });
 
+// ============================================
 // Connect to MongoDB and start server
-mongoose.connect(env.mongoURI)
+// ============================================
+mongoose
+    .connect(env.mongoURI)
     .then(() => {
         console.log("✅ MongoDB connected successfully");
-        
+
         server.listen(port, () => {
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
             console.log(`🚀 NANGFA Backend Server Started`);
@@ -194,11 +214,11 @@ mongoose.connect(env.mongoURI)
         process.exit(1);
     });
 
-server.on('error', (error) => {
-    if (error.code === 'EADDRINUSE') {
+server.on("error", (error) => {
+    if (error.code === "EADDRINUSE") {
         console.error(`❌ Port ${port} is already in use`);
     } else {
-        console.error('❌ Server error:', error);
+        console.error("❌ Server error:", error);
     }
     process.exit(1);
 });

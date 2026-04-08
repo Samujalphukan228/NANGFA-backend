@@ -110,40 +110,67 @@ app.get("/api/debug/socket-status", (req, res) => {
     });
 });
 
-// Graceful shutdown
-const gracefulShutdown = () => {
-    console.log('🛑 Starting graceful shutdown...');
+// ✅ FIXED: Graceful shutdown with async/await (Mongoose 7+ compatible)
+let isShuttingDown = false;
+
+const gracefulShutdown = async (signal) => {
+    // Prevent multiple shutdown attempts (fixes infinite loop)
+    if (isShuttingDown) {
+        console.log('⏳ Shutdown already in progress...');
+        return;
+    }
+    isShuttingDown = true;
     
-    server.close(() => {
-        console.log('✅ HTTP server closed');
-        
-        io.close(() => {
-            console.log('✅ Socket.io closed');
-            
-            mongoose.connection.close(false, () => {
-                console.log('✅ MongoDB connection closed');
-                process.exit(0);
-            });
-        });
-    });
+    console.log(`🛑 Starting graceful shutdown... (${signal})`);
 
     // Force shutdown after 30 seconds
-    setTimeout(() => {
+    const forceTimeout = setTimeout(() => {
         console.error('❌ Could not close connections in time, forcefully shutting down');
         process.exit(1);
     }, 30000);
+
+    try {
+        // 1. Close HTTP server
+        await new Promise((resolve, reject) => {
+            server.close((err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+        console.log('✅ HTTP server closed');
+
+        // 2. Close Socket.io
+        await new Promise((resolve) => {
+            io.close(() => resolve());
+        });
+        console.log('✅ Socket.io closed');
+
+        // 3. Close MongoDB connection (Promise-based - NO callback for Mongoose 7+)
+        await mongoose.connection.close();
+        console.log('✅ MongoDB connection closed');
+
+        clearTimeout(forceTimeout);
+        console.log('👋 Graceful shutdown completed');
+        process.exit(0);
+    } catch (err) {
+        console.error('❌ Error during shutdown:', err);
+        clearTimeout(forceTimeout);
+        process.exit(1);
+    }
 };
 
 // Handle process signals
-process.on('SIGTERM', gracefulShutdown);
-process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
 process.on('uncaughtException', (error) => {
     console.error('💥 Uncaught Exception:', error);
-    gracefulShutdown();
+    gracefulShutdown('uncaughtException');
 });
+
 process.on('unhandledRejection', (error) => {
     console.error('💥 Unhandled Rejection:', error);
-    gracefulShutdown();
+    gracefulShutdown('unhandledRejection');
 });
 
 // Connect to MongoDB and start server

@@ -73,6 +73,10 @@ app.use((err, req, res, next) => {
 const server = http.createServer(app);
 const port = process.env.PORT || 5000;
 
+// ✅✅✅ DEBUG LINE - SHOWS WHAT PORT IS BEING USED ✅✅✅
+console.log('🔍 PORT DEBUG: process.env.PORT =', process.env.PORT, '| Using port =', port);
+// ✅✅✅ END DEBUG ✅✅✅
+
 // Setup Socket.io
 const io = setupSocket(server);
 app.set("io", io);

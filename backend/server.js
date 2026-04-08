@@ -73,9 +73,8 @@ app.use((err, req, res, next) => {
 const server = http.createServer(app);
 const port = process.env.PORT || 5000;
 
-// ✅✅✅ DEBUG LINE - SHOWS WHAT PORT IS BEING USED ✅✅✅
+// ✅ DEBUG LINE
 console.log('🔍 PORT DEBUG: process.env.PORT =', process.env.PORT, '| Using port =', port);
-// ✅✅✅ END DEBUG ✅✅✅
 
 // Setup Socket.io
 const io = setupSocket(server);
@@ -202,12 +201,14 @@ mongoose
     .then(() => {
         console.log("✅ MongoDB connected successfully");
 
-        server.listen(port, () => {
+        // ✅✅✅ CRITICAL FIX: Bind to 0.0.0.0 instead of localhost ✅✅✅
+        server.listen(port, '0.0.0.0', () => {
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
             console.log(`🚀 NANGFA Backend Server Started`);
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-            console.log(`📡 HTTP Server:    http://localhost:${port}`);
-            console.log(`🔌 WebSocket:      ws://localhost:${port}`);
+            console.log(`📡 Listening on:   0.0.0.0:${port}`);
+            console.log(`🔌 WebSocket:      ws://0.0.0.0:${port}`);
+            console.log(`🌍 Public URL:     https://nangfa-backend-6ics.onrender.com`);
             console.log(`🗄️  Database:       Connected`);
             console.log(`🎯 Features:       Orders, Menu, Calls, Auth`);
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);

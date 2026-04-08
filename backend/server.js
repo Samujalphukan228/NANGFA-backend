@@ -71,7 +71,7 @@ app.use((err, req, res, next) => {
 
 // Create HTTP server
 const server = http.createServer(app);
-const port = env.port || 5000;
+const port = process.env.port || 5000;
 
 // ✅ Setup Socket.io using your existing socket.utils.js
 const io = setupSocket(server);

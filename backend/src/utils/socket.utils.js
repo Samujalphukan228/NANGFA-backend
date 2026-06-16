@@ -18,10 +18,7 @@ export const setupSocket = (server) => {
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth.token;
-
-      if (!token) {
-        return next(new Error('No token provided'));
-      }
+      if (!token) return next(new Error('No token provided'));
 
       const decoded = jwt.verify(token, env.jwtSecret);
 
@@ -39,10 +36,7 @@ export const setupSocket = (server) => {
       }
 
       const user = await employModel.findById(decoded.id).select('-password');
-      
-      if (!user) {
-        return next(new Error('User not found'));
-      }
+      if (!user) return next(new Error('User not found'));
 
       socket.user = {
         id: user._id.toString(),
@@ -94,7 +88,7 @@ export const setupSocket = (server) => {
     });
 
     // ============================================
-    // ADMIN-TO-KITCHEN CALL EVENTS
+    // ADMIN-TO-KITCHEN CALL EVENTS (unchanged)
     // ============================================
 
     socket.on('admin:call-kitchen', (data) => {
@@ -122,7 +116,7 @@ export const setupSocket = (server) => {
     socket.on('kitchen:answer-call', (data) => {
       const { to, answer } = data;
       console.log(`📞 Kitchen answering call to socket ${to}`);
-      io.to(to).emit('admin:call-answered', { 
+      io.to(to).emit('admin:call-answered', {
         answer,
         kitchenName: socket.user?.name,
         kitchenEmail: socket.user?.email,
@@ -134,33 +128,76 @@ export const setupSocket = (server) => {
     socket.on('admin:end-call', (data) => {
       const { to } = data || {};
       console.log(`📞 Admin ended call`);
-      io.to('kitchen').emit('kitchen:call-ended', {
-        timestamp: Date.now(),
-        reason: 'admin_ended'
-      });
-      if (to) {
-        io.to(to).emit('kitchen:call-ended', {
-          timestamp: Date.now(),
-          reason: 'admin_ended'
-        });
-      }
+      io.to('kitchen').emit('kitchen:call-ended', { timestamp: Date.now(), reason: 'admin_ended' });
+      if (to) io.to(to).emit('kitchen:call-ended', { timestamp: Date.now(), reason: 'admin_ended' });
     });
 
     socket.on('kitchen:end-call', (data) => {
       const { to } = data || {};
       console.log(`📞 Kitchen ended call`);
-      if (to) {
-        io.to(to).emit('admin:call-ended', {
-          timestamp: Date.now(),
-          reason: 'kitchen_ended'
-        });
-      }
+      if (to) io.to(to).emit('admin:call-ended', { timestamp: Date.now(), reason: 'kitchen_ended' });
       io.to('admin').emit('kitchen:call-ended', {
         timestamp: Date.now(),
         reason: 'kitchen_ended',
         kitchenName: socket.user?.name
       });
     });
+
+    // ============================================
+    // WAITER-TO-KITCHEN CALL EVENTS (new)
+    // ============================================
+
+    socket.on('waiter:call-kitchen', (data) => {
+      const { offer } = data;
+      const kitchenRoom = io.sockets.adapter.rooms.get('kitchen');
+      const kitchenMembers = kitchenRoom ? kitchenRoom.size : 0;
+
+      console.log(`📞 Waiter calling kitchen (${kitchenMembers} staff online)`);
+
+      if (kitchenMembers === 0) {
+        socket.emit('waiter:call-error', { message: 'No kitchen staff online' });
+        socket.emit('waiter:no-kitchen-available');
+        return;
+      }
+
+      io.to('kitchen').emit('kitchen:waiter-incoming-call', {
+        from: socket.id,
+        waiterEmail: socket.user?.email,
+        waiterName: socket.user?.name,
+        offer,
+        timestamp: Date.now()
+      });
+
+      console.log(`📞 Waiter call sent to kitchen`);
+    });
+
+    socket.on('kitchen:answer-waiter-call', (data) => {
+      const { to, answer } = data;
+      console.log(`📞 Kitchen answering waiter call to socket ${to}`);
+      io.to(to).emit('waiter:call-answered', {
+        answer,
+        kitchenName: socket.user?.name,
+        from: socket.id,
+        timestamp: Date.now()
+      });
+    });
+
+    socket.on('waiter:end-call', (data) => {
+      const { to } = data || {};
+      console.log(`📞 Waiter ended call`);
+      io.to('kitchen').emit('kitchen:waiter-call-ended', { timestamp: Date.now(), reason: 'waiter_ended' });
+      if (to) io.to(to).emit('kitchen:waiter-call-ended', { timestamp: Date.now(), reason: 'waiter_ended' });
+    });
+
+    socket.on('kitchen:end-waiter-call', (data) => {
+      const { to } = data || {};
+      console.log(`📞 Kitchen ended waiter call`);
+      if (to) io.to(to).emit('waiter:call-ended', { timestamp: Date.now(), reason: 'kitchen_ended' });
+    });
+
+    // ============================================
+    // SHARED ICE CANDIDATE (works for all calls)
+    // ============================================
 
     socket.on('ice-candidate', (data) => {
       const { to, candidate } = data;
@@ -172,6 +209,10 @@ export const setupSocket = (server) => {
         });
       }
     });
+
+    // ============================================
+    // ADMIN CALL CONTROLS (unchanged)
+    // ============================================
 
     socket.on('admin:mute-kitchen', () => {
       console.log(`🔇 Admin muting kitchen`);
@@ -185,7 +226,6 @@ export const setupSocket = (server) => {
 
     socket.on('admin:toggle-kitchen-video', (data) => {
       const { enabled } = data;
-      console.log(`📹 Admin toggled kitchen video: ${enabled ? 'ON' : 'OFF'}`);
       io.to('kitchen').emit('kitchen:video-toggled', { enabled, timestamp: Date.now() });
     });
 
@@ -202,9 +242,7 @@ export const setupSocket = (server) => {
     socket.on('get:rooms-info', () => {
       const rooms = {};
       io.sockets.adapter.rooms.forEach((sockets, roomName) => {
-        if (!roomName.includes('-')) {
-          rooms[roomName] = sockets.size;
-        }
+        if (!roomName.includes('-')) rooms[roomName] = sockets.size;
       });
       socket.emit('rooms:info', { rooms, timestamp: Date.now() });
     });
@@ -221,10 +259,7 @@ export const setupSocket = (server) => {
       console.log(`🔌 Client disconnected: ${socket.id} (${reason}) [${socket.user?.role}]`);
 
       if (socket.user?.type === 'admin') {
-        io.to('kitchen').emit('kitchen:call-ended', {
-          timestamp: Date.now(),
-          reason: 'admin_disconnected'
-        });
+        io.to('kitchen').emit('kitchen:call-ended', { timestamp: Date.now(), reason: 'admin_disconnected' });
       } else if (socket.user?.role === 'kitchen') {
         io.to('role:admin').emit('kitchen:disconnected', {
           kitchenName: socket.user?.name,
@@ -236,11 +271,21 @@ export const setupSocket = (server) => {
           kitchenEmail: socket.user?.email,
           timestamp: Date.now()
         });
+        // If kitchen disconnects during waiter call, notify waiter
+        io.to('waiter').emit('waiter:call-ended', {
+          timestamp: Date.now(),
+          reason: 'kitchen_disconnected'
+        });
       } else if (socket.user?.role === 'waiter') {
         io.to('admin').emit('waiter:disconnected', {
           waiterName: socket.user?.name,
           waiterEmail: socket.user?.email,
           timestamp: Date.now()
+        });
+        // If waiter disconnects during call, notify kitchen
+        io.to('kitchen').emit('kitchen:waiter-call-ended', {
+          timestamp: Date.now(),
+          reason: 'waiter_disconnected'
         });
       }
     });

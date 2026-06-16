@@ -18,6 +18,8 @@ import menuRouter from "./src/routers/menu.routes.js";
 import orderRouter from "./src/routers/order.routes.js";
 import adminEmployRouter from "./src/routers/admin.employ.routes.js";
 import adminCallRouter from "./src/routers/adminCall.routes.js";
+import waiterRouter from "./src/routers/waiter.routes.js";
+
 
 // Create Express app
 const app = express();
@@ -51,6 +53,8 @@ app.use("/api/menu", menuRouter);
 app.use("/api/orders", orderRouter);
 app.use("/api/admin/employees", adminEmployRouter);
 app.use("/api/admin/calls", adminCallRouter);
+app.use("/api/waiter", waiterRouter);
+
 
 // 404 handler
 app.use((req, res) => {

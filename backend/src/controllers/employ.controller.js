@@ -34,8 +34,8 @@ export const registerEmploy = async (req, res) => {
       name: name.trim(),
       email: email.toLowerCase(),
       password: hash,
-      isVerified: true,  // ✅ Auto-verify or set to false if admin approval needed
-      role: "pending",   // Admin will approve later
+      isVerified: true,
+      role: "pending",
       isAproved: false,
     });
 
@@ -77,9 +77,6 @@ export const registerEmploy = async (req, res) => {
   }
 };
 
-// ❌ Remove verifyOTP - not needed anymore
-// export const verifyOTP = async (req, res) => { ... };
-
 // ✅ Login - simplified
 export const loginEmploy = async (req, res) => {
   try {
@@ -118,6 +115,7 @@ export const loginEmploy = async (req, res) => {
         role: employ.role,
         isAproved: employ.isAproved,
         isVerified: employ.isVerified,
+        isActive: employ.isActive,  // ✅ FIXED: Added isActive
       },
     });
   } catch (error) {
@@ -125,12 +123,6 @@ export const loginEmploy = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
-// ❌ Remove forgotPassword - not using OTP
-// export const forgotPassword = async (req, res) => { ... };
-
-// ❌ Remove resetPassword - not using OTP
-// export const resetPassword = async (req, res) => { ... };
 
 // ✅ Get current user info
 export const getMe = async (req, res) => {
@@ -173,6 +165,7 @@ export const getMe = async (req, res) => {
         role: employ.role,
         isAproved: employ.isAproved,
         isVerified: employ.isVerified,
+        isActive: employ.isActive,  // ✅ FIXED: Added isActive
       },
     });
   } catch (error) {

@@ -64,7 +64,73 @@ const emitToAll = (io, event, data) => {
   io.emit(event, data);
 };
 
-// GET /api/waiter/orders — all preparing orders across all tables
+// ✅ findOrderChanges - tracks what changed
+const findOrderChanges = (oldOrder, newMenuItems) => {
+  const changes = {
+    newItems: [],
+    removedItems: [],
+    updatedItems: [],
+    added: [],
+    removed: [],
+    updated: []
+  };
+
+  const oldItemsMap = new Map();
+  oldOrder.menuItems.forEach(item => {
+    const menuId = item.menuId?._id
+      ? item.menuId._id.toString()
+      : item.menuId.toString();
+    oldItemsMap.set(menuId, {
+      quantity: item.quantity,
+      name: item.menuId?.name || item.name || 'Unknown',
+      category: item.menuId?.menuCategory || item.category || 'uncategorized'
+    });
+  });
+
+  const newItemsMap = new Map();
+  newMenuItems.forEach(item => {
+    newItemsMap.set(item.menuId.toString(), {
+      quantity: item.quantity,
+      name: item.name,
+      category: item.category || 'uncategorized'
+    });
+  });
+
+  newItemsMap.forEach((newItem, menuId) => {
+    if (!oldItemsMap.has(menuId)) {
+      changes.newItems.push({ menuId, name: newItem.name, category: newItem.category, quantity: newItem.quantity });
+      changes.added.push({ menuId, name: newItem.name, category: newItem.category, quantity: newItem.quantity });
+    }
+  });
+
+  oldItemsMap.forEach((oldItem, menuId) => {
+    if (!newItemsMap.has(menuId)) {
+      changes.removedItems.push({ menuId, name: oldItem.name, category: oldItem.category, quantity: oldItem.quantity });
+      changes.removed.push({ menuId, name: oldItem.name, category: oldItem.category, quantity: oldItem.quantity });
+    }
+  });
+
+  newItemsMap.forEach((newItem, menuId) => {
+    const oldItem = oldItemsMap.get(menuId);
+    if (oldItem && oldItem.quantity !== newItem.quantity) {
+      const type = newItem.quantity > oldItem.quantity ? 'increased' : 'decreased';
+      changes.updatedItems.push({
+        menuId, name: newItem.name, category: newItem.category,
+        oldQuantity: oldItem.quantity, newQuantity: newItem.quantity,
+        change: newItem.quantity - oldItem.quantity, type
+      });
+      changes.updated.push({
+        menuId, name: newItem.name, category: newItem.category,
+        oldQuantity: oldItem.quantity, newQuantity: newItem.quantity,
+        change: newItem.quantity - oldItem.quantity,
+      });
+    }
+  });
+
+  return changes;
+};
+
+// GET /api/waiter/orders
 export const waiterGetOrders = async (req, res) => {
   try {
     const orders = await orderModel
@@ -86,7 +152,7 @@ export const waiterGetOrders = async (req, res) => {
   }
 };
 
-// GET /api/waiter/orders/menu — get full menu so waiter can pick items
+// GET /api/waiter/menu
 export const waiterGetMenu = async (req, res) => {
   try {
     const menus = await menuModel.find().sort({ priority: -1, date: -1 });
@@ -97,7 +163,7 @@ export const waiterGetMenu = async (req, res) => {
   }
 };
 
-// POST /api/waiter/orders/create
+// ✅ FIXED: POST /api/waiter/orders/create
 export const waiterCreateOrder = async (req, res) => {
   try {
     const { menuItems, tableNumber } = req.body;
@@ -123,17 +189,35 @@ export const waiterCreateOrder = async (req, res) => {
     });
 
     await order.save();
+
+    // ✅ FIXED: populate before emitting so admin gets full data
     await order.populate("menuItems.menuId", "name price image menuCategory");
 
     const io = req.app.get("io");
-    if (io) emitToAll(io, "order:new", order);
+    if (io) {
+      // ✅ FIXED: emit clean toObject() with tableDisplayText
+      const socketData = {
+        ...order.toObject(),
+        tableDisplayText: formatTableDisplay(order.tableNumber),
+      };
+
+      io.to("kitchen").emit("order:new", socketData);
+      io.to("admin").emit("order:new", socketData);
+      io.to("waiter").emit("order:new", socketData);
+      io.emit("order:new", socketData);
+
+      console.log(`📡 Emitted order:new to all rooms - Order: ${order._id}, Table: ${formatTableDisplay(normalizedTableNumber)}`);
+    }
 
     console.log(`✅ Waiter order created: ${order._id}, ${formatTableDisplay(normalizedTableNumber)}, Total: ₹${totalPrice}`);
 
     return res.status(201).json({
       success: true,
       message: "Order created successfully",
-      order,
+      order: {
+        ...order.toObject(),
+        tableDisplayText: formatTableDisplay(order.tableNumber),
+      },
     });
   } catch (error) {
     console.error("waiterCreateOrder error:", error);
@@ -141,12 +225,13 @@ export const waiterCreateOrder = async (req, res) => {
   }
 };
 
-// PUT /api/waiter/orders/:id — edit items or table only, cannot complete or cancel
+// ✅ FIXED: PUT /api/waiter/orders/:id - now tracks changes
 export const waiterUpdateOrder = async (req, res) => {
   try {
     const { id } = req.params;
     const { menuItems, tableNumber } = req.body;
 
+    // ✅ populate so findOrderChanges can read old item names
     const order = await orderModel
       .findById(id)
       .populate("menuItems.menuId", "name price image menuCategory");
@@ -163,6 +248,7 @@ export const waiterUpdateOrder = async (req, res) => {
     }
 
     let updateData = {};
+    let changes = null;
 
     if (menuItems !== undefined) {
       if (menuItems.length === 0) {
@@ -173,16 +259,45 @@ export const waiterUpdateOrder = async (req, res) => {
       }
 
       const { totalPrice, validatedItems } = await validateAndCalculateTotal(menuItems);
+
+      // ✅ Calculate changes
+      changes = findOrderChanges(order, validatedItems);
+
       updateData.menuItems = validatedItems;
       updateData.totalPrice = totalPrice;
-      updateData.lastUpdatedAt = new Date();
-      updateData.$push = {
-        updateHistory: {
-          updatedAt: new Date(),
-          updatedBy: getCreatorName(req),
-          changes: { added: [], removed: [], updated: [] },
-        },
-      };
+
+      // ✅ Set change arrays on order
+      updateData.newItems = changes.newItems;
+      updateData.updatedItems = changes.updatedItems.map(item => ({
+        menuId: item.menuId,
+        name: item.name,
+        category: item.category,
+        oldQuantity: item.oldQuantity,
+        newQuantity: item.newQuantity,
+        change: item.change,
+        type: item.type,
+      }));
+      updateData.removedItems = changes.removedItems;
+
+      // ✅ Only set lastUpdatedAt if actual changes exist
+      if (
+        changes.newItems.length > 0 ||
+        changes.removedItems.length > 0 ||
+        changes.updatedItems.length > 0
+      ) {
+        updateData.lastUpdatedAt = new Date();
+        updateData.$push = {
+          updateHistory: {
+            updatedAt: new Date(),
+            updatedBy: getCreatorName(req),
+            changes: {
+              added: changes.added,
+              removed: changes.removed,
+              updated: changes.updated
+            },
+          },
+        };
+      }
     }
 
     if (tableNumber !== undefined) {
@@ -194,12 +309,46 @@ export const waiterUpdateOrder = async (req, res) => {
       .populate("menuItems.menuId", "name price image menuCategory");
 
     const io = req.app.get("io");
-    if (io) emitToAll(io, "order:update", {
-      ...updatedOrder.toObject(),
-      tableDisplayText: formatTableDisplay(updatedOrder.tableNumber),
-    });
+    if (io) {
+      // ✅ FIXED: emit clean toObject() with change arrays
+      const socketData = {
+        ...updatedOrder.toObject(),
+        updatedItems: updatedOrder.updatedItems,
+        newItems: updatedOrder.newItems,
+        removedItems: updatedOrder.removedItems,
+        tableDisplayText: formatTableDisplay(updatedOrder.tableNumber),
+      };
+
+      io.to("kitchen").emit("order:update", socketData);
+      io.to("admin").emit("order:update", socketData);
+      io.to("waiter").emit("order:update", socketData);
+      io.emit("order:update", socketData);
+
+      // ✅ Kitchen specific events
+      if (changes) {
+        if (changes.newItems.length > 0)
+          io.to('kitchen').emit("order:items-added", {
+            orderId: id,
+            items: changes.added,
+            tableNumber: updatedOrder.tableNumber
+          });
+        if (changes.removedItems.length > 0)
+          io.to('kitchen').emit("order:items-removed", {
+            orderId: id,
+            items: changes.removed,
+            tableNumber: updatedOrder.tableNumber
+          });
+        if (changes.updatedItems.length > 0)
+          io.to('kitchen').emit("order:items-updated", {
+            orderId: id,
+            items: changes.updated,
+            tableNumber: updatedOrder.tableNumber
+          });
+      }
+    }
 
     console.log(`✅ Waiter order updated: ${id}, ${formatTableDisplay(updatedOrder.tableNumber)}`);
+    console.log(`📊 Changes - Added: ${changes?.newItems.length || 0}, Removed: ${changes?.removedItems.length || 0}, Updated: ${changes?.updatedItems.length || 0}`);
 
     return res.status(200).json({
       success: true,
@@ -208,6 +357,11 @@ export const waiterUpdateOrder = async (req, res) => {
         ...updatedOrder.toObject(),
         tableDisplayText: formatTableDisplay(updatedOrder.tableNumber),
       },
+      changes: changes ? {
+        itemsAdded: changes.added,
+        itemsRemoved: changes.removed,
+        itemsUpdated: changes.updated
+      } : null,
     });
   } catch (error) {
     console.error("waiterUpdateOrder error:", error);
@@ -215,7 +369,7 @@ export const waiterUpdateOrder = async (req, res) => {
   }
 };
 
-// GET /api/waiter/orders/:id — get single order
+// GET /api/waiter/orders/:id
 export const waiterGetOrderById = async (req, res) => {
   try {
     const { id } = req.params;

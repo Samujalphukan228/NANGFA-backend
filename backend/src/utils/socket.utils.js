@@ -3,6 +3,9 @@ import jwt from "jsonwebtoken";
 import env from "./env.js";
 import { employModel } from "../models/employ.model.js";
 
+// Tracks active waiter<->kitchen calls: waiterSocketId -> kitchenSocketId and vice versa
+const activeCalls = new Map();
+
 export const setupSocket = (server) => {
   const io = new Server(server, {
     cors: {
@@ -21,6 +24,8 @@ export const setupSocket = (server) => {
       if (!token) return next(new Error('No token provided'));
 
       const decoded = jwt.verify(token, env.jwtSecret);
+
+      if (!decoded?.id) return next(new Error('Bad token'));
 
       if (decoded.id === 'admin') {
         socket.user = {
@@ -58,16 +63,7 @@ export const setupSocket = (server) => {
   io.on("connection", (socket) => {
     console.log("🔌 Client connected:", socket.id, `[${socket.user?.type}] [${socket.user?.role}]`);
 
-    socket.on("joinRole", (role) => {
-      socket.join(role);
-      console.log(`✅ Socket ${socket.id} joined room: ${role}`);
-      socket.emit('room:joined', {
-        room: role,
-        members: io.sockets.adapter.rooms.get(role)?.size || 0
-      });
-    });
-
-    // Auto-join based on role
+    // Auto-join based on role — no manual joinRole needed
     if (socket.user?.type === 'admin') {
       socket.join('role:admin');
       socket.join('admin');
@@ -88,7 +84,7 @@ export const setupSocket = (server) => {
     });
 
     // ============================================
-    // ADMIN-TO-KITCHEN CALL EVENTS (unchanged)
+    // ADMIN-TO-KITCHEN CALL EVENTS
     // ============================================
 
     socket.on('admin:call-kitchen', (data) => {
@@ -144,7 +140,7 @@ export const setupSocket = (server) => {
     });
 
     // ============================================
-    // WAITER-TO-KITCHEN CALL EVENTS (new)
+    // WAITER-TO-KITCHEN CALL EVENTS
     // ============================================
 
     socket.on('waiter:call-kitchen', (data) => {
@@ -160,6 +156,13 @@ export const setupSocket = (server) => {
         return;
       }
 
+      // Store the waiter's socket id so we can target only them on disconnect
+      const kitchenSocketIds = Array.from(kitchenRoom);
+      kitchenSocketIds.forEach(kId => {
+        activeCalls.set(socket.id, kId);
+        activeCalls.set(kId, socket.id);
+      });
+
       io.to('kitchen').emit('kitchen:waiter-incoming-call', {
         from: socket.id,
         waiterEmail: socket.user?.email,
@@ -167,13 +170,13 @@ export const setupSocket = (server) => {
         offer,
         timestamp: Date.now()
       });
-
-      console.log(`📞 Waiter call sent to kitchen`);
     });
 
     socket.on('kitchen:answer-waiter-call', (data) => {
       const { to, answer } = data;
       console.log(`📞 Kitchen answering waiter call to socket ${to}`);
+      activeCalls.set(socket.id, to);
+      activeCalls.set(to, socket.id);
       io.to(to).emit('waiter:call-answered', {
         answer,
         kitchenName: socket.user?.name,
@@ -185,18 +188,25 @@ export const setupSocket = (server) => {
     socket.on('waiter:end-call', (data) => {
       const { to } = data || {};
       console.log(`📞 Waiter ended call`);
-      io.to('kitchen').emit('kitchen:waiter-call-ended', { timestamp: Date.now(), reason: 'waiter_ended' });
-      if (to) io.to(to).emit('kitchen:waiter-call-ended', { timestamp: Date.now(), reason: 'waiter_ended' });
+      if (to) {
+        io.to(to).emit('kitchen:waiter-call-ended', { timestamp: Date.now(), reason: 'waiter_ended' });
+        activeCalls.delete(to);
+      }
+      activeCalls.delete(socket.id);
     });
 
     socket.on('kitchen:end-waiter-call', (data) => {
       const { to } = data || {};
       console.log(`📞 Kitchen ended waiter call`);
-      if (to) io.to(to).emit('waiter:call-ended', { timestamp: Date.now(), reason: 'kitchen_ended' });
+      if (to) {
+        io.to(to).emit('waiter:call-ended', { timestamp: Date.now(), reason: 'kitchen_ended' });
+        activeCalls.delete(to);
+      }
+      activeCalls.delete(socket.id);
     });
 
     // ============================================
-    // SHARED ICE CANDIDATE (works for all calls)
+    // SHARED ICE CANDIDATE
     // ============================================
 
     socket.on('ice-candidate', (data) => {
@@ -211,16 +221,14 @@ export const setupSocket = (server) => {
     });
 
     // ============================================
-    // ADMIN CALL CONTROLS (unchanged)
+    // ADMIN CALL CONTROLS
     // ============================================
 
     socket.on('admin:mute-kitchen', () => {
-      console.log(`🔇 Admin muting kitchen`);
       io.to('kitchen').emit('kitchen:muted', { timestamp: Date.now() });
     });
 
     socket.on('admin:unmute-kitchen', () => {
-      console.log(`🔊 Admin unmuting kitchen`);
       io.to('kitchen').emit('kitchen:unmuted', { timestamp: Date.now() });
     });
 
@@ -260,6 +268,7 @@ export const setupSocket = (server) => {
 
       if (socket.user?.type === 'admin') {
         io.to('kitchen').emit('kitchen:call-ended', { timestamp: Date.now(), reason: 'admin_disconnected' });
+
       } else if (socket.user?.role === 'kitchen') {
         io.to('role:admin').emit('kitchen:disconnected', {
           kitchenName: socket.user?.name,
@@ -271,22 +280,35 @@ export const setupSocket = (server) => {
           kitchenEmail: socket.user?.email,
           timestamp: Date.now()
         });
-        // If kitchen disconnects during waiter call, notify waiter
-        io.to('waiter').emit('waiter:call-ended', {
-          timestamp: Date.now(),
-          reason: 'kitchen_disconnected'
-        });
+
+        // Only notify the specific waiter who was in a call with this kitchen socket
+        const peerSocketId = activeCalls.get(socket.id);
+        if (peerSocketId) {
+          io.to(peerSocketId).emit('waiter:call-ended', {
+            timestamp: Date.now(),
+            reason: 'kitchen_disconnected'
+          });
+          activeCalls.delete(peerSocketId);
+          activeCalls.delete(socket.id);
+        }
+
       } else if (socket.user?.role === 'waiter') {
         io.to('admin').emit('waiter:disconnected', {
           waiterName: socket.user?.name,
           waiterEmail: socket.user?.email,
           timestamp: Date.now()
         });
-        // If waiter disconnects during call, notify kitchen
-        io.to('kitchen').emit('kitchen:waiter-call-ended', {
-          timestamp: Date.now(),
-          reason: 'waiter_disconnected'
-        });
+
+        // Only notify the specific kitchen socket that was in a call with this waiter
+        const peerSocketId = activeCalls.get(socket.id);
+        if (peerSocketId) {
+          io.to(peerSocketId).emit('kitchen:waiter-call-ended', {
+            timestamp: Date.now(),
+            reason: 'waiter_disconnected'
+          });
+          activeCalls.delete(peerSocketId);
+          activeCalls.delete(socket.id);
+        }
       }
     });
 

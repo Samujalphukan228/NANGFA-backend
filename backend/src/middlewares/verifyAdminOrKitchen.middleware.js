@@ -1,4 +1,3 @@
-// src/middlewares/verifyAdminOrKitchen.middleware.js
 import jwt from "jsonwebtoken";
 import env from "../utils/env.js";
 import { employModel } from "../models/employ.model.js";
@@ -16,10 +15,9 @@ export const verifyAdminOrKitchen = async (req, res, next) => {
 
     const decoded = jwt.verify(token, env.jwtSecret);
 
-    // Check if admin (from env)
-    if (decoded.id === env.adminEmail || decoded.email === env.adminEmail) {
+    if (decoded.email === env.adminEmail) {
       req.admin = {
-        _id: env.adminEmail,
+        _id: 'admin',
         email: env.adminEmail,
         role: 'admin',
         isVerified: true
@@ -28,17 +26,15 @@ export const verifyAdminOrKitchen = async (req, res, next) => {
       return next();
     }
 
-    // Try to find kitchen employee
     const employee = await employModel.findById(decoded.id);
     
     if (employee && employee.isVerified && employee.isAproved && employee.role === 'kitchen') {
-      req.admin = { _id: employee._id }; // For compatibility
+      req.admin = { _id: employee._id };
       req.employee = employee;
       req.userType = 'kitchen';
       return next();
     }
 
-    // Neither admin nor kitchen
     return res.status(403).json({ 
       success: false, 
       message: 'Not authorized - admin or kitchen access required' 

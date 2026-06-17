@@ -3,19 +3,23 @@ import jwt from "jsonwebtoken";
 import env from "./env.js";
 import { employModel } from "../models/employ.model.js";
 
-// Tracks active calls: socketId -> peerSocketId
 const activeCalls = new Map();
 
 export const setupSocket = (server) => {
   const io = new Server(server, {
     cors: {
       origin: "*",
-      methods: ["GET", "POST", "PUT", "DELETE"],
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
       credentials: true,
+      allowedHeaders: ["Content-Type", "Authorization"]
     },
-    transports: ['websocket', 'polling'],
-    pingTimeout: 60000,
-    pingInterval: 25000
+    transports: ['polling', 'websocket'],
+    pingTimeout: 120000,
+    pingInterval: 25000,
+    upgradeTimeout: 30000,
+    allowUpgrades: true,
+    allowEIO3: true,
+    cookie: false
   });
 
   // ============================================
@@ -29,7 +33,6 @@ export const setupSocket = (server) => {
       const decoded = jwt.verify(token, env.jwtSecret);
       if (!decoded?.id) return next(new Error('Bad token'));
 
-      // ✅ FIXED: Check both id and email for admin
       if (decoded.id === 'admin' || decoded.email === env.adminEmail) {
         socket.user = {
           id: 'admin',
@@ -43,12 +46,10 @@ export const setupSocket = (server) => {
         return next();
       }
 
-      // Employee
       const user = await employModel.findById(decoded.id).select('-password');
       if (!user) return next(new Error('User not found'));
 
-      // ✅ This log tells you exactly what role is coming from DB
-      console.log(`🔍 Socket user from DB: ${user.email} | role: "${user.role}"`);
+      console.log(`🔍 Socket user: ${user.email} | role: "${user.role}"`);
 
       socket.user = {
         id: user._id.toString(),
@@ -68,6 +69,24 @@ export const setupSocket = (server) => {
   });
 
   // ============================================
+  // HELPER: Get real kitchen socket IDs only
+  // ============================================
+  const getRealKitchenSockets = (excludeSocketId = null) => {
+    const kitchenRoom = io.sockets.adapter.rooms.get('kitchen');
+    if (!kitchenRoom) return [];
+
+    const realKitchen = [];
+    kitchenRoom.forEach(socketId => {
+      if (socketId === excludeSocketId) return;
+      const memberSocket = io.sockets.sockets.get(socketId);
+      if (memberSocket?.user?.role === 'kitchen') {
+        realKitchen.push(socketId);
+      }
+    });
+    return realKitchen;
+  };
+
+  // ============================================
   // CONNECTION
   // ============================================
   io.on("connection", (socket) => {
@@ -76,7 +95,7 @@ export const setupSocket = (server) => {
 
     console.log(`🔌 Connected: ${socket.id} | ${socket.user?.email} | role: ${userRole} | type: ${userType}`);
 
-    // ✅ AUTO-JOIN ROOMS
+    // AUTO-JOIN ROOMS
     if (userType === 'admin') {
       socket.join('admin');
       socket.join('role:admin');
@@ -84,9 +103,9 @@ export const setupSocket = (server) => {
 
     } else if (userRole === 'kitchen') {
       socket.join('kitchen');
-      console.log(`✅ Kitchen staff joined room: kitchen | Total: ${io.sockets.adapter.rooms.get('kitchen')?.size}`);
+      const kitchenCount = io.sockets.adapter.rooms.get('kitchen')?.size || 0;
+      console.log(`✅ Kitchen joined room: kitchen | Total: ${kitchenCount}`);
 
-      // Tell admin kitchen is online
       io.to('admin').emit('kitchen:online', {
         socketId: socket.id,
         name: socket.user?.name,
@@ -99,8 +118,31 @@ export const setupSocket = (server) => {
       console.log(`✅ Waiter joined room: waiter`);
     }
 
-    // Manual join (optional fallback)
+    // ============================================
+    // JOIN ROLE - with protection
+    // ============================================
     socket.on("joinRole", (role) => {
+      const uType = socket.user?.type;
+      const uRole = socket.user?.role;
+
+      // Block admin from joining kitchen or waiter
+      if (uType === 'admin' && (role === 'kitchen' || role === 'waiter')) {
+        console.log(`🚫 BLOCKED: Admin tried to join '${role}' room`);
+        return;
+      }
+
+      // Block kitchen from joining waiter
+      if (uRole === 'kitchen' && role === 'waiter') {
+        console.log(`🚫 BLOCKED: Kitchen tried to join waiter room`);
+        return;
+      }
+
+      // Block waiter from joining kitchen
+      if (uRole === 'waiter' && role === 'kitchen') {
+        console.log(`🚫 BLOCKED: Waiter tried to join kitchen room`);
+        return;
+      }
+
       socket.join(role);
       console.log(`✅ Manual joinRole: ${socket.id} joined ${role}`);
       socket.emit('room:joined', {
@@ -116,35 +158,37 @@ export const setupSocket = (server) => {
     });
 
     // ============================================
-    // ADMIN-TO-KITCHEN CALL EVENTS
+    // ADMIN-TO-KITCHEN CALL - FIXED
     // ============================================
-
     socket.on('admin:call-kitchen', (data) => {
       const { offer } = data;
 
-      const kitchenRoom = io.sockets.adapter.rooms.get('kitchen');
-      const kitchenMembers = kitchenRoom ? kitchenRoom.size : 0;
+      const realKitchenSocketIds = getRealKitchenSockets(socket.id);
+      const realKitchenCount = realKitchenSocketIds.length;
 
-      // ✅ This log tells you if kitchen is in the room
       console.log(`📞 Admin calling kitchen...`);
-      console.log(`   Kitchen room size: ${kitchenMembers}`);
+      console.log(`   Total in kitchen room: ${io.sockets.adapter.rooms.get('kitchen')?.size || 0}`);
+      console.log(`   Real kitchen staff: ${realKitchenCount}`);
+      console.log(`   Kitchen socket IDs: ${realKitchenSocketIds.join(', ')}`);
 
-      if (kitchenMembers === 0) {
-        console.log(`❌ Call failed: No kitchen staff in room`);
+      if (realKitchenCount === 0) {
+        console.log(`❌ No real kitchen staff found`);
         socket.emit('call:error', { message: 'No kitchen staff online' });
         socket.emit('call:no-kitchen-available');
         return;
       }
 
-      console.log(`✅ Sending call to ${kitchenMembers} kitchen staff`);
-
-      io.to('kitchen').emit('kitchen:incoming-call', {
-        from: socket.id,
-        adminEmail: socket.user?.email,
-        adminName: socket.user?.name,
-        offer,
-        timestamp: Date.now()
+      realKitchenSocketIds.forEach(kitchenSocketId => {
+        io.to(kitchenSocketId).emit('kitchen:incoming-call', {
+          from: socket.id,
+          adminEmail: socket.user?.email,
+          adminName: socket.user?.name,
+          offer,
+          timestamp: Date.now()
+        });
       });
+
+      console.log(`✅ Call sent to ${realKitchenCount} real kitchen staff`);
     });
 
     socket.on('kitchen:answer-call', (data) => {
@@ -162,25 +206,30 @@ export const setupSocket = (server) => {
     socket.on('admin:end-call', (data) => {
       const { to } = data || {};
       console.log(`📞 Admin ended call`);
-      io.to('kitchen').emit('kitchen:call-ended', { 
-        timestamp: Date.now(), 
-        reason: 'admin_ended' 
+
+      const realKitchenSocketIds = getRealKitchenSockets(socket.id);
+      realKitchenSocketIds.forEach(kitchenSocketId => {
+        io.to(kitchenSocketId).emit('kitchen:call-ended', {
+          timestamp: Date.now(),
+          reason: 'admin_ended'
+        });
       });
+
       if (to) {
-        io.to(to).emit('kitchen:call-ended', { 
-          timestamp: Date.now(), 
-          reason: 'admin_ended' 
+        io.to(to).emit('kitchen:call-ended', {
+          timestamp: Date.now(),
+          reason: 'admin_ended'
         });
       }
     });
 
     socket.on('kitchen:end-call', (data) => {
       const { to } = data || {};
-      console.log(`📞 Kitchen ended admin call`);
+      console.log(`📞 Kitchen ended call`);
       if (to) {
-        io.to(to).emit('admin:call-ended', { 
-          timestamp: Date.now(), 
-          reason: 'kitchen_ended' 
+        io.to(to).emit('admin:call-ended', {
+          timestamp: Date.now(),
+          reason: 'kitchen_ended'
         });
       }
       io.to('admin').emit('kitchen:call-ended', {
@@ -191,35 +240,32 @@ export const setupSocket = (server) => {
     });
 
     // ============================================
-    // WAITER-TO-KITCHEN CALL EVENTS
+    // WAITER-TO-KITCHEN CALL
     // ============================================
-
     socket.on('waiter:call-kitchen', (data) => {
       const { offer } = data;
-      const kitchenRoom = io.sockets.adapter.rooms.get('kitchen');
-      const kitchenMembers = kitchenRoom ? kitchenRoom.size : 0;
 
-      console.log(`📞 Waiter calling kitchen (${kitchenMembers} staff online)`);
+      const realKitchenSocketIds = getRealKitchenSockets();
+      const realKitchenCount = realKitchenSocketIds.length;
 
-      if (kitchenMembers === 0) {
+      console.log(`📞 Waiter calling kitchen (${realKitchenCount} real staff online)`);
+
+      if (realKitchenCount === 0) {
         socket.emit('waiter:call-error', { message: 'No kitchen staff online' });
         socket.emit('waiter:no-kitchen-available');
         return;
       }
 
-      // Track active call
-      const kitchenSocketIds = Array.from(kitchenRoom);
-      kitchenSocketIds.forEach(kId => {
+      realKitchenSocketIds.forEach(kId => {
         activeCalls.set(socket.id, kId);
         activeCalls.set(kId, socket.id);
-      });
-
-      io.to('kitchen').emit('kitchen:waiter-incoming-call', {
-        from: socket.id,
-        waiterEmail: socket.user?.email,
-        waiterName: socket.user?.name,
-        offer,
-        timestamp: Date.now()
+        io.to(kId).emit('kitchen:waiter-incoming-call', {
+          from: socket.id,
+          waiterEmail: socket.user?.email,
+          waiterName: socket.user?.name,
+          offer,
+          timestamp: Date.now()
+        });
       });
     });
 
@@ -240,9 +286,9 @@ export const setupSocket = (server) => {
       const { to } = data || {};
       console.log(`📞 Waiter ended call`);
       if (to) {
-        io.to(to).emit('kitchen:waiter-call-ended', { 
-          timestamp: Date.now(), 
-          reason: 'waiter_ended' 
+        io.to(to).emit('kitchen:waiter-call-ended', {
+          timestamp: Date.now(),
+          reason: 'waiter_ended'
         });
         activeCalls.delete(to);
       }
@@ -253,9 +299,9 @@ export const setupSocket = (server) => {
       const { to } = data || {};
       console.log(`📞 Kitchen ended waiter call`);
       if (to) {
-        io.to(to).emit('waiter:call-ended', { 
-          timestamp: Date.now(), 
-          reason: 'kitchen_ended' 
+        io.to(to).emit('waiter:call-ended', {
+          timestamp: Date.now(),
+          reason: 'kitchen_ended'
         });
         activeCalls.delete(to);
       }
@@ -263,9 +309,8 @@ export const setupSocket = (server) => {
     });
 
     // ============================================
-    // SHARED ICE CANDIDATE
+    // ICE CANDIDATE
     // ============================================
-
     socket.on('ice-candidate', (data) => {
       const { to, candidate } = data;
       if (to && candidate) {
@@ -278,32 +323,41 @@ export const setupSocket = (server) => {
     });
 
     // ============================================
-    // ADMIN CALL CONTROLS
+    // ADMIN CONTROLS
     // ============================================
-
     socket.on('admin:mute-kitchen', () => {
-      io.to('kitchen').emit('kitchen:muted', { timestamp: Date.now() });
+      const realKitchenSocketIds = getRealKitchenSockets(socket.id);
+      realKitchenSocketIds.forEach(id => {
+        io.to(id).emit('kitchen:muted', { timestamp: Date.now() });
+      });
     });
 
     socket.on('admin:unmute-kitchen', () => {
-      io.to('kitchen').emit('kitchen:unmuted', { timestamp: Date.now() });
+      const realKitchenSocketIds = getRealKitchenSockets(socket.id);
+      realKitchenSocketIds.forEach(id => {
+        io.to(id).emit('kitchen:unmuted', { timestamp: Date.now() });
+      });
     });
 
     socket.on('admin:toggle-kitchen-video', (data) => {
-      const { enabled } = data;
-      io.to('kitchen').emit('kitchen:video-toggled', { 
-        enabled, 
-        timestamp: Date.now() 
+      const realKitchenSocketIds = getRealKitchenSockets(socket.id);
+      realKitchenSocketIds.forEach(id => {
+        io.to(id).emit('kitchen:video-toggled', {
+          enabled: data?.enabled,
+          timestamp: Date.now()
+        });
       });
     });
 
     socket.on('admin:check-kitchen-availability', () => {
-      const kitchenRoom = io.sockets.adapter.rooms.get('kitchen');
-      const isAvailable = kitchenRoom && kitchenRoom.size > 0;
-      console.log(`🔍 Kitchen availability check: ${isAvailable ? 'ONLINE' : 'OFFLINE'} (${kitchenRoom?.size || 0} members)`);
+      const realKitchenSocketIds = getRealKitchenSockets(socket.id);
+      const isAvailable = realKitchenSocketIds.length > 0;
+
+      console.log(`🔍 Kitchen check: ${isAvailable ? 'ONLINE' : 'OFFLINE'} (${realKitchenSocketIds.length} real staff)`);
+
       socket.emit('kitchen:availability', {
         available: isAvailable,
-        members: kitchenRoom ? kitchenRoom.size : 0,
+        members: realKitchenSocketIds.length,
         timestamp: Date.now()
       });
     });
@@ -317,7 +371,6 @@ export const setupSocket = (server) => {
     });
 
     socket.on('employee:registered', (data) => {
-      console.log(`👤 New employee registered:`, data.email);
       io.to('role:admin').emit('employee:registered', data);
     });
 
@@ -325,28 +378,27 @@ export const setupSocket = (server) => {
     // DISCONNECT
     // ============================================
     socket.on("disconnect", (reason) => {
-      console.log(`🔌 Disconnected: ${socket.id} | reason: ${reason} | role: ${userRole}`);
+      console.log(`🔌 Disconnected: ${socket.id} | ${reason} | ${userRole}`);
 
       if (userType === 'admin') {
-        io.to('kitchen').emit('kitchen:call-ended', { 
-          timestamp: Date.now(), 
-          reason: 'admin_disconnected' 
+        const realKitchenSocketIds = getRealKitchenSockets();
+        realKitchenSocketIds.forEach(id => {
+          io.to(id).emit('kitchen:call-ended', {
+            timestamp: Date.now(),
+            reason: 'admin_disconnected'
+          });
         });
 
       } else if (userRole === 'kitchen') {
-        // Tell admin kitchen went offline
         io.to('admin').emit('kitchen:disconnected', {
           kitchenName: socket.user?.name,
-          kitchenEmail: socket.user?.email,
           timestamp: Date.now()
         });
         io.to('role:admin').emit('kitchen:disconnected', {
           kitchenName: socket.user?.name,
-          kitchenEmail: socket.user?.email,
           timestamp: Date.now()
         });
 
-        // Notify peer waiter if in a call
         const peerSocketId = activeCalls.get(socket.id);
         if (peerSocketId) {
           io.to(peerSocketId).emit('waiter:call-ended', {
@@ -360,11 +412,9 @@ export const setupSocket = (server) => {
       } else if (userRole === 'waiter') {
         io.to('admin').emit('waiter:disconnected', {
           waiterName: socket.user?.name,
-          waiterEmail: socket.user?.email,
           timestamp: Date.now()
         });
 
-        // Notify peer kitchen if in a call
         const peerSocketId = activeCalls.get(socket.id);
         if (peerSocketId) {
           io.to(peerSocketId).emit('kitchen:waiter-call-ended', {
@@ -382,7 +432,6 @@ export const setupSocket = (server) => {
     });
   });
 
-  // Helper methods
   io.getRoomSockets = (roomName) => {
     const room = io.sockets.adapter.rooms.get(roomName);
     return room ? Array.from(room) : [];

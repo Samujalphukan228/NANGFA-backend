@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import env from "./env.js";
 import { employModel } from "../models/employ.model.js";
 
-// Tracks active waiter<->kitchen calls: waiterSocketId -> kitchenSocketId and vice versa
+// Tracks active calls: socketId -> peerSocketId
 const activeCalls = new Map();
 
 export const setupSocket = (server) => {
@@ -18,16 +18,19 @@ export const setupSocket = (server) => {
     pingInterval: 25000
   });
 
+  // ============================================
+  // AUTHENTICATION MIDDLEWARE
+  // ============================================
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth.token;
       if (!token) return next(new Error('No token provided'));
 
       const decoded = jwt.verify(token, env.jwtSecret);
-
       if (!decoded?.id) return next(new Error('Bad token'));
 
-      if (decoded.id === 'admin') {
+      // ✅ FIXED: Check both id and email for admin
+      if (decoded.id === 'admin' || decoded.email === env.adminEmail) {
         socket.user = {
           id: 'admin',
           email: decoded.email || env.adminEmail,
@@ -36,23 +39,27 @@ export const setupSocket = (server) => {
           name: 'Admin',
           type: 'admin'
         };
-        console.log('✅ Admin authenticated via JWT');
+        console.log('✅ Admin authenticated via socket');
         return next();
       }
 
+      // Employee
       const user = await employModel.findById(decoded.id).select('-password');
       if (!user) return next(new Error('User not found'));
+
+      // ✅ This log tells you exactly what role is coming from DB
+      console.log(`🔍 Socket user from DB: ${user.email} | role: "${user.role}"`);
 
       socket.user = {
         id: user._id.toString(),
         email: user.email,
-        role: user.role || 'employee',
-        isApproved: user.isAproved !== undefined ? user.isAproved : true,
-        name: user.name || user.email.split('@')[0],
+        role: user.role,
+        isApproved: user.isAproved,
+        name: user.name,
         type: 'employee'
       };
 
-      console.log('✅ Employee authenticated:', user.email, `[${user.role}]`);
+      console.log(`✅ Employee authenticated: ${user.email} [${user.role}]`);
       next();
     } catch (err) {
       console.error('❌ Socket auth error:', err.message);
@@ -60,26 +67,51 @@ export const setupSocket = (server) => {
     }
   });
 
+  // ============================================
+  // CONNECTION
+  // ============================================
   io.on("connection", (socket) => {
-    console.log("🔌 Client connected:", socket.id, `[${socket.user?.type}] [${socket.user?.role}]`);
+    const userRole = socket.user?.role;
+    const userType = socket.user?.type;
 
-    // Auto-join based on role — no manual joinRole needed
-    if (socket.user?.type === 'admin') {
-      socket.join('role:admin');
+    console.log(`🔌 Connected: ${socket.id} | ${socket.user?.email} | role: ${userRole} | type: ${userType}`);
+
+    // ✅ AUTO-JOIN ROOMS
+    if (userType === 'admin') {
       socket.join('admin');
-      console.log(`✅ Admin auto-joined rooms: role:admin, admin`);
-    } else if (socket.user?.role === 'kitchen') {
+      socket.join('role:admin');
+      console.log(`✅ Admin joined rooms: admin, role:admin`);
+
+    } else if (userRole === 'kitchen') {
       socket.join('kitchen');
-      console.log(`✅ Kitchen staff auto-joined room: kitchen`);
-    } else if (socket.user?.role === 'waiter') {
+      console.log(`✅ Kitchen staff joined room: kitchen | Total: ${io.sockets.adapter.rooms.get('kitchen')?.size}`);
+
+      // Tell admin kitchen is online
+      io.to('admin').emit('kitchen:online', {
+        socketId: socket.id,
+        name: socket.user?.name,
+        email: socket.user?.email,
+        timestamp: Date.now()
+      });
+
+    } else if (userRole === 'waiter') {
       socket.join('waiter');
-      console.log(`✅ Waiter auto-joined room: waiter`);
+      console.log(`✅ Waiter joined room: waiter`);
     }
+
+    // Manual join (optional fallback)
+    socket.on("joinRole", (role) => {
+      socket.join(role);
+      console.log(`✅ Manual joinRole: ${socket.id} joined ${role}`);
+      socket.emit('room:joined', {
+        room: role,
+        members: io.sockets.adapter.rooms.get(role)?.size || 0
+      });
+    });
 
     socket.on("joinTable", (tableNumber) => {
       if (tableNumber) {
         socket.join(`table:${tableNumber}`);
-        console.log(`✅ Socket ${socket.id} joined table:${tableNumber}`);
       }
     });
 
@@ -89,16 +121,22 @@ export const setupSocket = (server) => {
 
     socket.on('admin:call-kitchen', (data) => {
       const { offer } = data;
+
       const kitchenRoom = io.sockets.adapter.rooms.get('kitchen');
       const kitchenMembers = kitchenRoom ? kitchenRoom.size : 0;
 
-      console.log(`📞 Admin calling kitchen (${kitchenMembers} staff online)`);
+      // ✅ This log tells you if kitchen is in the room
+      console.log(`📞 Admin calling kitchen...`);
+      console.log(`   Kitchen room size: ${kitchenMembers}`);
 
       if (kitchenMembers === 0) {
+        console.log(`❌ Call failed: No kitchen staff in room`);
         socket.emit('call:error', { message: 'No kitchen staff online' });
         socket.emit('call:no-kitchen-available');
         return;
       }
+
+      console.log(`✅ Sending call to ${kitchenMembers} kitchen staff`);
 
       io.to('kitchen').emit('kitchen:incoming-call', {
         from: socket.id,
@@ -111,7 +149,7 @@ export const setupSocket = (server) => {
 
     socket.on('kitchen:answer-call', (data) => {
       const { to, answer } = data;
-      console.log(`📞 Kitchen answering call to socket ${to}`);
+      console.log(`📞 Kitchen answering admin call to ${to}`);
       io.to(to).emit('admin:call-answered', {
         answer,
         kitchenName: socket.user?.name,
@@ -124,14 +162,27 @@ export const setupSocket = (server) => {
     socket.on('admin:end-call', (data) => {
       const { to } = data || {};
       console.log(`📞 Admin ended call`);
-      io.to('kitchen').emit('kitchen:call-ended', { timestamp: Date.now(), reason: 'admin_ended' });
-      if (to) io.to(to).emit('kitchen:call-ended', { timestamp: Date.now(), reason: 'admin_ended' });
+      io.to('kitchen').emit('kitchen:call-ended', { 
+        timestamp: Date.now(), 
+        reason: 'admin_ended' 
+      });
+      if (to) {
+        io.to(to).emit('kitchen:call-ended', { 
+          timestamp: Date.now(), 
+          reason: 'admin_ended' 
+        });
+      }
     });
 
     socket.on('kitchen:end-call', (data) => {
       const { to } = data || {};
-      console.log(`📞 Kitchen ended call`);
-      if (to) io.to(to).emit('admin:call-ended', { timestamp: Date.now(), reason: 'kitchen_ended' });
+      console.log(`📞 Kitchen ended admin call`);
+      if (to) {
+        io.to(to).emit('admin:call-ended', { 
+          timestamp: Date.now(), 
+          reason: 'kitchen_ended' 
+        });
+      }
       io.to('admin').emit('kitchen:call-ended', {
         timestamp: Date.now(),
         reason: 'kitchen_ended',
@@ -156,7 +207,7 @@ export const setupSocket = (server) => {
         return;
       }
 
-      // Store the waiter's socket id so we can target only them on disconnect
+      // Track active call
       const kitchenSocketIds = Array.from(kitchenRoom);
       kitchenSocketIds.forEach(kId => {
         activeCalls.set(socket.id, kId);
@@ -174,7 +225,7 @@ export const setupSocket = (server) => {
 
     socket.on('kitchen:answer-waiter-call', (data) => {
       const { to, answer } = data;
-      console.log(`📞 Kitchen answering waiter call to socket ${to}`);
+      console.log(`📞 Kitchen answering waiter call to ${to}`);
       activeCalls.set(socket.id, to);
       activeCalls.set(to, socket.id);
       io.to(to).emit('waiter:call-answered', {
@@ -189,7 +240,10 @@ export const setupSocket = (server) => {
       const { to } = data || {};
       console.log(`📞 Waiter ended call`);
       if (to) {
-        io.to(to).emit('kitchen:waiter-call-ended', { timestamp: Date.now(), reason: 'waiter_ended' });
+        io.to(to).emit('kitchen:waiter-call-ended', { 
+          timestamp: Date.now(), 
+          reason: 'waiter_ended' 
+        });
         activeCalls.delete(to);
       }
       activeCalls.delete(socket.id);
@@ -199,7 +253,10 @@ export const setupSocket = (server) => {
       const { to } = data || {};
       console.log(`📞 Kitchen ended waiter call`);
       if (to) {
-        io.to(to).emit('waiter:call-ended', { timestamp: Date.now(), reason: 'kitchen_ended' });
+        io.to(to).emit('waiter:call-ended', { 
+          timestamp: Date.now(), 
+          reason: 'kitchen_ended' 
+        });
         activeCalls.delete(to);
       }
       activeCalls.delete(socket.id);
@@ -234,12 +291,16 @@ export const setupSocket = (server) => {
 
     socket.on('admin:toggle-kitchen-video', (data) => {
       const { enabled } = data;
-      io.to('kitchen').emit('kitchen:video-toggled', { enabled, timestamp: Date.now() });
+      io.to('kitchen').emit('kitchen:video-toggled', { 
+        enabled, 
+        timestamp: Date.now() 
+      });
     });
 
     socket.on('admin:check-kitchen-availability', () => {
       const kitchenRoom = io.sockets.adapter.rooms.get('kitchen');
       const isAvailable = kitchenRoom && kitchenRoom.size > 0;
+      console.log(`🔍 Kitchen availability check: ${isAvailable ? 'ONLINE' : 'OFFLINE'} (${kitchenRoom?.size || 0} members)`);
       socket.emit('kitchen:availability', {
         available: isAvailable,
         members: kitchenRoom ? kitchenRoom.size : 0,
@@ -264,24 +325,28 @@ export const setupSocket = (server) => {
     // DISCONNECT
     // ============================================
     socket.on("disconnect", (reason) => {
-      console.log(`🔌 Client disconnected: ${socket.id} (${reason}) [${socket.user?.role}]`);
+      console.log(`🔌 Disconnected: ${socket.id} | reason: ${reason} | role: ${userRole}`);
 
-      if (socket.user?.type === 'admin') {
-        io.to('kitchen').emit('kitchen:call-ended', { timestamp: Date.now(), reason: 'admin_disconnected' });
-
-      } else if (socket.user?.role === 'kitchen') {
-        io.to('role:admin').emit('kitchen:disconnected', {
-          kitchenName: socket.user?.name,
-          kitchenEmail: socket.user?.email,
-          timestamp: Date.now()
+      if (userType === 'admin') {
+        io.to('kitchen').emit('kitchen:call-ended', { 
+          timestamp: Date.now(), 
+          reason: 'admin_disconnected' 
         });
+
+      } else if (userRole === 'kitchen') {
+        // Tell admin kitchen went offline
         io.to('admin').emit('kitchen:disconnected', {
           kitchenName: socket.user?.name,
           kitchenEmail: socket.user?.email,
           timestamp: Date.now()
         });
+        io.to('role:admin').emit('kitchen:disconnected', {
+          kitchenName: socket.user?.name,
+          kitchenEmail: socket.user?.email,
+          timestamp: Date.now()
+        });
 
-        // Only notify the specific waiter who was in a call with this kitchen socket
+        // Notify peer waiter if in a call
         const peerSocketId = activeCalls.get(socket.id);
         if (peerSocketId) {
           io.to(peerSocketId).emit('waiter:call-ended', {
@@ -292,14 +357,14 @@ export const setupSocket = (server) => {
           activeCalls.delete(socket.id);
         }
 
-      } else if (socket.user?.role === 'waiter') {
+      } else if (userRole === 'waiter') {
         io.to('admin').emit('waiter:disconnected', {
           waiterName: socket.user?.name,
           waiterEmail: socket.user?.email,
           timestamp: Date.now()
         });
 
-        // Only notify the specific kitchen socket that was in a call with this waiter
+        // Notify peer kitchen if in a call
         const peerSocketId = activeCalls.get(socket.id);
         if (peerSocketId) {
           io.to(peerSocketId).emit('kitchen:waiter-call-ended', {
@@ -317,6 +382,7 @@ export const setupSocket = (server) => {
     });
   });
 
+  // Helper methods
   io.getRoomSockets = (roomName) => {
     const room = io.sockets.adapter.rooms.get(roomName);
     return room ? Array.from(room) : [];

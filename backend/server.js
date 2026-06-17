@@ -5,13 +5,10 @@ import http from "http";
 import mongoose from "mongoose";
 import { setupSocket } from "./src/utils/socket.utils.js";
 
-// Load environment variables
 dotenv.config();
 
-// Import env config
 import env from "./src/utils/env.js";
 
-// Import routers
 import adminRouter from "./src/routers/admin.routes.js";
 import employRouter from "./src/routers/employ.routes.js";
 import menuRouter from "./src/routers/menu.routes.js";
@@ -20,21 +17,22 @@ import adminEmployRouter from "./src/routers/admin.employ.routes.js";
 import adminCallRouter from "./src/routers/adminCall.routes.js";
 import waiterRouter from "./src/routers/waiter.routes.js";
 
-
-// Create Express app
 const app = express();
 
-// Middleware
-app.use(cors());
+app.use(cors({
+    origin: "*",
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
 app.use(express.json());
 
-// Request logging
 app.use((req, res, next) => {
     console.log(`${req.method} ${req.url}`);
     next();
 });
 
-// Basic routes
 app.get("/", (req, res) => {
     res.send("✅ NANGFA Backend API is running!");
 });
@@ -55,39 +53,48 @@ app.use("/api/admin/employees", adminEmployRouter);
 app.use("/api/admin/calls", adminCallRouter);
 app.use("/api/waiter", waiterRouter);
 
+// ✅ DEBUG ROUTE - See all connected sockets and rooms
+app.get("/api/debug/rooms", (req, res) => {
+    const io = req.app.get("io");
 
-// 404 handler
-app.use((req, res) => {
-    res.status(404).json({
-        success: false,
-        message: "Route not found",
-        path: req.url,
+    if (!io) {
+        return res.status(500).json({
+            success: false,
+            message: "Socket.io not initialized"
+        });
+    }
+
+    const roomDetails = {};
+    io.sockets.adapter.rooms.forEach((sockets, roomName) => {
+        roomDetails[roomName] = {
+            size: sockets.size,
+            members: Array.from(sockets)
+        };
+    });
+
+    const connectedSockets = [];
+    io.sockets.sockets.forEach((socket, id) => {
+        connectedSockets.push({
+            id,
+            email: socket.user?.email,
+            role: socket.user?.role,
+            type: socket.user?.type,
+            rooms: Array.from(socket.rooms)
+        });
+    });
+
+    res.json({
+        success: true,
+        totalConnected: io.sockets.sockets.size,
+        rooms: roomDetails,
+        sockets: connectedSockets,
+        timestamp: new Date().toISOString()
     });
 });
 
-// Error handler
-app.use((err, req, res, next) => {
-    res.status(err.statusCode || 500).json({
-        success: false,
-        message: err.message,
-    });
-});
-
-// Create HTTP server
-const server = http.createServer(app);
-const port = process.env.PORT || 5000;
-
-// ✅ DEBUG LINE
-console.log('🔍 PORT DEBUG: process.env.PORT =', process.env.PORT, '| Using port =', port);
-
-// Setup Socket.io
-const io = setupSocket(server);
-app.set("io", io);
-
-console.log("✅ Socket.io configured with authentication and WebRTC support");
-
-// Debug endpoint
+// ✅ DEBUG SOCKET STATUS
 app.get("/api/debug/socket-status", (req, res) => {
+    const io = req.app.get("io");
     const rooms = {};
 
     io.sockets.adapter.rooms.forEach((sockets, roomName) => {
@@ -109,39 +116,54 @@ app.get("/api/debug/socket-status", (req, res) => {
         timestamp: new Date().toISOString(),
         connectedSockets: io.sockets.sockets.size,
         rooms,
-        features: [
-            "WebRTC Audio/Video Calls",
-            "Order Notifications",
-            "Real-time Updates",
-            "Room-based Broadcasting",
-        ],
     });
 });
 
-// ============================================
-// ✅ FIXED: Graceful Shutdown (No more errors)
-// ============================================
+// 404 handler
+app.use((req, res) => {
+    res.status(404).json({
+        success: false,
+        message: "Route not found",
+        path: req.url,
+    });
+});
+
+// Error handler
+app.use((err, req, res, next) => {
+    res.status(err.statusCode || 500).json({
+        success: false,
+        message: err.message,
+    });
+});
+
+const server = http.createServer(app);
+const port = process.env.PORT || 5000;
+
+console.log('🔍 PORT DEBUG: process.env.PORT =', process.env.PORT, '| Using port =', port);
+
+// Setup Socket.io
+const io = setupSocket(server);
+app.set("io", io);
+
+console.log("✅ Socket.io configured");
+
 const shutdown = {
     isShuttingDown: false,
 
     async start(signal) {
-        // Prevent multiple shutdown attempts
         if (this.isShuttingDown) {
-            console.log(`⚠️  Shutdown already in progress, ignoring ${signal}`);
+            console.log(`⚠️ Shutdown already in progress`);
             return;
         }
         this.isShuttingDown = true;
-
         console.log(`🛑 Starting graceful shutdown... (${signal})`);
 
-        // Force exit after 30 seconds
         const forceTimeout = setTimeout(() => {
             console.error("❌ Force shutdown after 30s timeout");
             process.exit(1);
         }, 30000);
 
         try {
-            // 1. Close HTTP server
             if (server.listening) {
                 await new Promise((resolve, reject) => {
                     server.close((err) => {
@@ -152,7 +174,6 @@ const shutdown = {
                 console.log("✅ HTTP server closed");
             }
 
-            // 2. Close Socket.io
             if (io) {
                 await new Promise((resolve) => {
                     io.close(() => resolve());
@@ -160,7 +181,6 @@ const shutdown = {
                 console.log("✅ Socket.io closed");
             }
 
-            // 3. Close MongoDB (Promise-based for Mongoose 7+)
             if (mongoose.connection.readyState === 1) {
                 await mongoose.connection.close();
                 console.log("✅ MongoDB connection closed");
@@ -177,44 +197,35 @@ const shutdown = {
     },
 };
 
-// ✅ Use .once() - runs only ONE time per signal
 process.once("SIGTERM", () => shutdown.start("SIGTERM"));
 process.once("SIGINT", () => shutdown.start("SIGINT"));
 
-// ✅ Error handlers - just exit, don't call shutdown (prevents infinite loop)
 process.on("uncaughtException", (error) => {
     console.error("💥 Uncaught Exception:", error);
     process.exit(1);
 });
 
 process.on("unhandledRejection", (reason) => {
-    // Ignore errors during shutdown
     if (shutdown.isShuttingDown) {
-        console.log("⚠️  Ignoring rejection during shutdown");
+        console.log("⚠️ Ignoring rejection during shutdown");
         return;
     }
     console.error("💥 Unhandled Rejection:", reason);
     process.exit(1);
 });
 
-// ============================================
-// Connect to MongoDB and start server
-// ============================================
 mongoose
     .connect(env.mongoURI)
     .then(() => {
         console.log("✅ MongoDB connected successfully");
 
-        // ✅✅✅ CRITICAL FIX: Bind to 0.0.0.0 instead of localhost ✅✅✅
         server.listen(port, '0.0.0.0', () => {
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
             console.log(`🚀 NANGFA Backend Server Started`);
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
             console.log(`📡 Listening on:   0.0.0.0:${port}`);
-            console.log(`🔌 WebSocket:      ws://0.0.0.0:${port}`);
             console.log(`🌍 Public URL:     https://nangfa-backend-6ics.onrender.com`);
             console.log(`🗄️  Database:       Connected`);
-            console.log(`🎯 Features:       Orders, Menu, Calls, Auth`);
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
         });
     })

@@ -64,7 +64,6 @@ const emitToAll = (io, event, data) => {
   io.emit(event, data);
 };
 
-// ✅ findOrderChanges - tracks what changed
 const findOrderChanges = (oldOrder, newMenuItems) => {
   const changes = {
     newItems: [],
@@ -163,7 +162,7 @@ export const waiterGetMenu = async (req, res) => {
   }
 };
 
-// ✅ FIXED: POST /api/waiter/orders/create
+// POST /api/waiter/orders/create
 export const waiterCreateOrder = async (req, res) => {
   try {
     const { menuItems, tableNumber } = req.body;
@@ -189,24 +188,20 @@ export const waiterCreateOrder = async (req, res) => {
     });
 
     await order.save();
-
-    // ✅ FIXED: populate before emitting so admin gets full data
     await order.populate("menuItems.menuId", "name price image menuCategory");
 
     const io = req.app.get("io");
     if (io) {
-      // ✅ FIXED: emit clean toObject() with tableDisplayText
       const socketData = {
         ...order.toObject(),
         tableDisplayText: formatTableDisplay(order.tableNumber),
       };
-
       io.to("kitchen").emit("order:new", socketData);
       io.to("admin").emit("order:new", socketData);
       io.to("waiter").emit("order:new", socketData);
       io.emit("order:new", socketData);
 
-      console.log(`📡 Emitted order:new to all rooms - Order: ${order._id}, Table: ${formatTableDisplay(normalizedTableNumber)}`);
+      console.log(`📡 Emitted order:new - Order: ${order._id}, Table: ${formatTableDisplay(normalizedTableNumber)}`);
     }
 
     console.log(`✅ Waiter order created: ${order._id}, ${formatTableDisplay(normalizedTableNumber)}, Total: ₹${totalPrice}`);
@@ -225,13 +220,12 @@ export const waiterCreateOrder = async (req, res) => {
   }
 };
 
-// ✅ FIXED: PUT /api/waiter/orders/:id - now tracks changes
+// PUT /api/waiter/orders/:id
 export const waiterUpdateOrder = async (req, res) => {
   try {
     const { id } = req.params;
     const { menuItems, tableNumber } = req.body;
 
-    // ✅ populate so findOrderChanges can read old item names
     const order = await orderModel
       .findById(id)
       .populate("menuItems.menuId", "name price image menuCategory");
@@ -259,14 +253,10 @@ export const waiterUpdateOrder = async (req, res) => {
       }
 
       const { totalPrice, validatedItems } = await validateAndCalculateTotal(menuItems);
-
-      // ✅ Calculate changes
       changes = findOrderChanges(order, validatedItems);
 
       updateData.menuItems = validatedItems;
       updateData.totalPrice = totalPrice;
-
-      // ✅ Set change arrays on order
       updateData.newItems = changes.newItems;
       updateData.updatedItems = changes.updatedItems.map(item => ({
         menuId: item.menuId,
@@ -279,7 +269,6 @@ export const waiterUpdateOrder = async (req, res) => {
       }));
       updateData.removedItems = changes.removedItems;
 
-      // ✅ Only set lastUpdatedAt if actual changes exist
       if (
         changes.newItems.length > 0 ||
         changes.removedItems.length > 0 ||
@@ -310,7 +299,6 @@ export const waiterUpdateOrder = async (req, res) => {
 
     const io = req.app.get("io");
     if (io) {
-      // ✅ FIXED: emit clean toObject() with change arrays
       const socketData = {
         ...updatedOrder.toObject(),
         updatedItems: updatedOrder.updatedItems,
@@ -324,7 +312,6 @@ export const waiterUpdateOrder = async (req, res) => {
       io.to("waiter").emit("order:update", socketData);
       io.emit("order:update", socketData);
 
-      // ✅ Kitchen specific events
       if (changes) {
         if (changes.newItems.length > 0)
           io.to('kitchen').emit("order:items-added", {
@@ -391,5 +378,54 @@ export const waiterGetOrderById = async (req, res) => {
   } catch (error) {
     console.error("waiterGetOrderById error:", error);
     return res.status(500).json({ success: false, message: "Failed to fetch order" });
+  }
+};
+
+// ✅ DELETE /api/waiter/orders/:id
+export const waiterDeleteOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const order = await orderModel.findById(id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    // ✅ Only allow delete if still preparing
+    if (order.status !== "preparing") {
+      return res.status(400).json({
+        success: false,
+        message: "Only preparing orders can be deleted",
+      });
+    }
+
+    await orderModel.findByIdAndDelete(id);
+
+    // ✅ Emit socket update
+    const io = req.app.get("io");
+    if (io) {
+      io.to("kitchen").emit("order:delete", { id });
+      io.to("admin").emit("order:delete", { id });
+      io.to("waiter").emit("order:delete", { id });
+      io.emit("order:delete", { id });
+    }
+
+    console.log(`✅ Waiter deleted order: ${id}`);
+
+    return res.status(200).json({
+      success: true,
+      message: "Order deleted successfully",
+    });
+
+  } catch (error) {
+    console.error("waiterDeleteOrder error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete order",
+    });
   }
 };

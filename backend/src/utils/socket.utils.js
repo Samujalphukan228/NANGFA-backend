@@ -116,6 +116,11 @@ export const setupSocket = (server) => {
     } else if (userRole === 'waiter') {
       socket.join('waiter');
       console.log(`✅ Waiter joined room: waiter`);
+
+    } else if (userRole === 'accountant') {
+      socket.join('accountant');
+      socket.join('role:accountant');
+      console.log(`✅ Accountant joined rooms: accountant, role:accountant`);
     }
 
     // ============================================
@@ -131,6 +136,12 @@ export const setupSocket = (server) => {
         return;
       }
 
+      // Only real admins can join the admin rooms
+      if ((role === 'admin' || role === 'role:admin') && uType !== 'admin') {
+        console.log(`🚫 BLOCKED: ${uRole} tried to join '${role}' room`);
+        return;
+      }
+
       // Block kitchen from joining waiter
       if (uRole === 'kitchen' && role === 'waiter') {
         console.log(`🚫 BLOCKED: Kitchen tried to join waiter room`);
@@ -140,6 +151,18 @@ export const setupSocket = (server) => {
       // Block waiter from joining kitchen
       if (uRole === 'waiter' && role === 'kitchen') {
         console.log(`🚫 BLOCKED: Waiter tried to join kitchen room`);
+        return;
+      }
+
+      // Accountants are finance-only: keep them out of kitchen and waiter rooms
+      if (uRole === 'accountant' && (role === 'kitchen' || role === 'waiter')) {
+        console.log(`🚫 BLOCKED: Accountant tried to join '${role}' room`);
+        return;
+      }
+
+      // Kitchen and waiters cannot join the accountant room
+      if ((uRole === 'kitchen' || uRole === 'waiter') && (role === 'accountant' || role === 'role:accountant')) {
+        console.log(`🚫 BLOCKED: ${uRole} tried to join '${role}' room`);
         return;
       }
 

@@ -6,7 +6,7 @@ const employSchema = new mongoose.Schema({
     password: { type: String, required: true },
     role: {
         type: String,
-        enum: ["kitchen", "waiter", "pending"],
+        enum: ["kitchen", "waiter", "accountant", "pending"],
         default: "pending",
     },
     isAproved: { type: Boolean, default: false },

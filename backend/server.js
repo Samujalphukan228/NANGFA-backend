@@ -16,6 +16,7 @@ import orderRouter from "./src/routers/order.routes.js";
 import adminEmployRouter from "./src/routers/admin.employ.routes.js";
 import adminCallRouter from "./src/routers/adminCall.routes.js";
 import waiterRouter from "./src/routers/waiter.routes.js";
+import financeRouter from "./src/routers/finance.routes.js";
 
 const app = express();
 
@@ -52,6 +53,7 @@ app.use("/api/orders", orderRouter);
 app.use("/api/admin/employees", adminEmployRouter);
 app.use("/api/admin/calls", adminCallRouter);
 app.use("/api/waiter", waiterRouter);
+app.use("/api/finance", financeRouter);
 
 // ✅ DEBUG ROUTE - See all connected sockets and rooms
 app.get("/api/debug/rooms", (req, res) => {

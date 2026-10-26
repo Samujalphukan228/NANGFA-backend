@@ -40,7 +40,8 @@ export const approveEmployee = async (req, res) => {
       });
     }
 
-    const assignedRole = role === "waiter" ? "waiter" : "kitchen";
+    const assignableRoles = ["waiter", "kitchen", "accountant"];
+    const assignedRole = assignableRoles.includes(role) ? role : "kitchen";
 
     employee.isAproved = true;
     employee.role = assignedRole;
@@ -91,10 +92,10 @@ export const toggleWaiterActive = async (req, res) => {
       });
     }
 
-    if (employee.role !== "waiter") {
+    if (!["waiter", "accountant"].includes(employee.role)) {
       return res.status(400).json({
         success: false,
-        message: "This toggle is only for waiters",
+        message: "This toggle is only for waiters and accountants",
       });
     }
 
@@ -119,18 +120,18 @@ export const toggleWaiterActive = async (req, res) => {
       });
 
       if (!employee.isActive) {
-        io.to("waiter").emit("waiter:deactivated", {
+        io.to(employee.role).emit(`${employee.role}:deactivated`, {
           message: "Your account has been deactivated by admin.",
           timestamp: Date.now(),
         });
       }
     }
 
-    console.log(`✅ Waiter ${employee.name} set to ${employee.isActive ? "ACTIVE" : "INACTIVE"}`);
+    console.log(`✅ ${employee.role} ${employee.name} set to ${employee.isActive ? "ACTIVE" : "INACTIVE"}`);
 
     return res.status(200).json({
       success: true,
-      message: `Waiter is now ${employee.isActive ? "active" : "inactive"}`,
+      message: `${employee.role === "accountant" ? "Accountant" : "Waiter"} is now ${employee.isActive ? "active" : "inactive"}`,
       employee: {
         id: employee._id,
         name: employee.name,

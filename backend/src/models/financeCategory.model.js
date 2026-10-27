@@ -29,13 +29,11 @@ const financeCategorySchema = new mongoose.Schema({
         type: String,
         required: true,
         unique: true,
-        index: true,
     },
     kind: {
         type: String,
         enum: FINANCE_CATEGORY_KINDS,
         default: "expense",
-        index: true,
     },
     description: {
         type: String,

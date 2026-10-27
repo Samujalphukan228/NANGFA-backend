@@ -19,13 +19,11 @@ const financeEntrySchema = new mongoose.Schema({
     date: {
         type: Date,
         required: [true, "Date is required"],
-        index: true,
     },
     category: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "FinanceCategory",
         required: [true, "Category is required"],
-        index: true,
     },
     // Snapshots so reports stay readable even if a category is renamed.
     categoryName: {
@@ -37,7 +35,6 @@ const financeEntrySchema = new mongoose.Schema({
         type: String,
         enum: FINANCE_CATEGORY_KINDS,
         required: true,
-        index: true,
     },
     amount: {
         type: Number,
@@ -94,7 +91,6 @@ financeEntrySchema.pre("validate", function (next) {
 financeEntrySchema.index({ date: -1 });
 financeEntrySchema.index({ category: 1, date: -1 });
 financeEntrySchema.index({ categoryKind: 1, date: -1 });
-financeEntrySchema.index({ date: 1, categoryKind: 1 });
 
 export const financeEntryModel =
     mongoose.models.FinanceEntry ||

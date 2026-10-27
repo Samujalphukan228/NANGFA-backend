@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-// ✅ Order Schema - FIXED with auto-delete after 1 minute
+// Order schema. Completed orders are removed by the deleteAt TTL index.
 const orderSchema = new mongoose.Schema({
     menuItems: [{ 
         menuId: { type: mongoose.Schema.Types.ObjectId, ref: 'Menu', required: true },
@@ -34,8 +34,9 @@ const orderSchema = new mongoose.Schema({
     completedAt: { type: Date, default: null },
     completedBy: { type: String, default: null },
 
-    // ⏰ AUTO-DELETE FIELD: Set when order is completed, MongoDB will delete after 60 seconds
-    deleteAt: { type: Date, default: null },  // ← NEW FIELD FOR AUTO-DELETE
+    // Set to the next midnight when the order is completed. The TTL index
+    // below removes the document at exactly that time.
+    deleteAt: { type: Date, default: null },
 
     updatedItems: [{
         menuId: { type: mongoose.Schema.Types.ObjectId, ref: 'Menu' },
@@ -91,17 +92,12 @@ const orderSchema = new mongoose.Schema({
     cancellationReason: { type: String },
     cancelledAt: { type: Date },
     cancelledBy: { type: String },
-    
-    expiresAt: { type: Date, default: () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }
 }, {
     timestamps: true  // ✅ This handles createdAt and updatedAt automatically
 });
 
-// Indexes
-orderSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-
-// ⏰ TTL INDEX: Auto-delete completed orders after 60 seconds (1 minute)
-orderSchema.index({ deleteAt: 1 }, { expireAfterSeconds: 60 });  // ← AUTO-DELETE INDEX
+// TTL: delete completed orders at the moment stored in deleteAt (next midnight).
+orderSchema.index({ deleteAt: 1 }, { expireAfterSeconds: 0 });
 
 orderSchema.index({ status: 1, createdAt: -1 });
 orderSchema.index({ tableNumber: 1, status: 1 });

@@ -18,9 +18,7 @@ import {
     getRevenueByDateRange,
     getRevenueStats,
     getRevenueByCategory,
-    getTodayRevenueByCategory,
-    debugMenuCategories,
-    backfillOrderCategories
+    getTodayRevenueByCategory
 } from "../controllers/order.controller.js";
 import { verifyAdmin } from "../middlewares/verifyAdmin.middleware.js";
 import { verifyAdminOrKitchen } from "../middlewares/verifyAdminOrKitchen.middleware.js";
@@ -34,10 +32,6 @@ orderRouter.get("/revenue/total", verifyAdmin, getTotalRevenue);
 orderRouter.get("/revenue/range", verifyAdmin, getRevenueByDateRange);
 orderRouter.get("/revenue/by-category", verifyAdmin, getRevenueByCategory);
 orderRouter.get("/revenue/stats", verifyAdmin, getRevenueStats);
-
-// Debug / Backfill (admin-only)
-orderRouter.get("/debug/menu-categories", verifyAdmin, debugMenuCategories);
-orderRouter.post("/backfill-categories", verifyAdmin, backfillOrderCategories);
 
 // Order Routes
 orderRouter.get("/current", verifyAdminOrKitchen, getCurrentOrders);

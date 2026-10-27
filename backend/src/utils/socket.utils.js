@@ -10,7 +10,7 @@ export const setupSocket = (server) => {
     cors: {
       origin: "*",
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-      credentials: true,
+      credentials: false,
       allowedHeaders: ["Content-Type", "Authorization"]
     },
     transports: ['polling', 'websocket'],

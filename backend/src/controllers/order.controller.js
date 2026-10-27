@@ -1,106 +1,13 @@
 import { orderModel, revenueByCategoryModel } from "../models/order.model.js";
-import { menuModel } from "../models/menu.model.js";
 import { revenueModel } from "../models/revenue.model.js";
-
-const validateAndCalculateTotal = async (menuItems) => {
-    let totalPrice = 0;
-    const validatedItems = [];
-
-    for (const item of menuItems) {
-        const menu = await menuModel.findById(item.menuId);
-        if (!menu) throw new Error(`Menu item not found: ${item.menuId}`);
-        if (!item.quantity || item.quantity <= 0)
-            throw new Error(`Invalid quantity for ${menu.name}`);
-
-        totalPrice += (menu.price || 0) * item.quantity;
-        validatedItems.push({
-            menuId: item.menuId,
-            name: menu.name,
-            price: menu.price,
-            category: menu.category || 'uncategorized',
-            quantity: item.quantity
-        });
-    }
-    return { totalPrice, validatedItems };
-};
-
-const normalizeTableNumber = (tableNumber) => {
-    if (tableNumber === null || tableNumber === undefined) return [];
-    if (Array.isArray(tableNumber))
-        return tableNumber
-            .filter(t => t !== null && t !== undefined && t !== '')
-            .map(t => parseInt(t))
-            .filter(t => !isNaN(t))
-            .sort((a, b) => a - b);
-    if (typeof tableNumber === 'string') {
-        if (tableNumber.trim() === '') return [];
-        if (tableNumber.includes(','))
-            return tableNumber.split(',').map(t => parseInt(t.trim())).filter(t => !isNaN(t)).sort((a, b) => a - b);
-        const num = parseInt(tableNumber.trim());
-        return isNaN(num) ? [] : [num];
-    }
-    if (typeof tableNumber === 'number') return isNaN(tableNumber) ? [] : [tableNumber];
-    return [];
-};
-
-const formatTableDisplay = (tableNumbers) => {
-    if (!tableNumbers || tableNumbers.length === 0) return 'No Table';
-    if (tableNumbers.length === 1) return `Table ${tableNumbers[0]}`;
-    return `Tables ${tableNumbers.join(', ')}`;
-};
-
-const formatCategoryName = (category) => {
-    if (!category || category === 'uncategorized') return 'Uncategorized';
-    return category.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-};
-
-const findOrderChanges = (oldOrder, newMenuItems) => {
-    const changes = { newItems: [], removedItems: [], updatedItems: [], added: [], removed: [], updated: [] };
-
-    const oldItemsMap = new Map();
-    oldOrder.menuItems.forEach(item => {
-        const menuId = item.menuId._id ? item.menuId._id.toString() : item.menuId.toString();
-        oldItemsMap.set(menuId, {
-            quantity: item.quantity,
-            name: item.menuId.name || item.name || 'Unknown',
-            category: item.menuId.menuCategory || item.category || 'uncategorized'
-        });
-    });
-
-    const newItemsMap = new Map();
-    newMenuItems.forEach(item => {
-        newItemsMap.set(item.menuId.toString(), {
-            quantity: item.quantity,
-            name: item.name,
-            category: item.category || 'uncategorized'
-        });
-    });
-
-    newItemsMap.forEach((newItem, menuId) => {
-        if (!oldItemsMap.has(menuId)) {
-            changes.newItems.push({ menuId, name: newItem.name, category: newItem.category, quantity: newItem.quantity });
-            changes.added.push({ menuId, name: newItem.name, category: newItem.category, quantity: newItem.quantity });
-        }
-    });
-
-    oldItemsMap.forEach((oldItem, menuId) => {
-        if (!newItemsMap.has(menuId)) {
-            changes.removedItems.push({ menuId, name: oldItem.name, category: oldItem.category, quantity: oldItem.quantity });
-            changes.removed.push({ menuId, name: oldItem.name, category: oldItem.category, quantity: oldItem.quantity });
-        }
-    });
-
-    newItemsMap.forEach((newItem, menuId) => {
-        const oldItem = oldItemsMap.get(menuId);
-        if (oldItem && oldItem.quantity !== newItem.quantity) {
-            const type = newItem.quantity > oldItem.quantity ? 'increased' : 'decreased';
-            changes.updatedItems.push({ menuId, name: newItem.name, category: newItem.category, oldQuantity: oldItem.quantity, newQuantity: newItem.quantity, type });
-            changes.updated.push({ menuId, name: newItem.name, category: newItem.category, oldQuantity: oldItem.quantity, newQuantity: newItem.quantity });
-        }
-    });
-
-    return changes;
-};
+import {
+    emitToAll,
+    findOrderChanges,
+    formatCategoryName,
+    formatTableDisplay,
+    normalizeTableNumber,
+    validateAndCalculateTotal,
+} from "../utils/orderHelpers.js";
 
 const getAdminId = (req) => {
     if (req.admin) {
@@ -109,14 +16,6 @@ const getAdminId = (req) => {
         if (req.admin.name) return req.admin.name;
     }
     return 'admin';
-};
-
-// helper: emit order events to all relevant rooms
-const emitToAll = (io, event, data) => {
-    io.to('kitchen').emit(event, data);
-    io.to('admin').emit(event, data);
-    io.to('waiter').emit(event, data);
-    io.emit(event, data);
 };
 
 export const createOrder = async (req, res) => {
@@ -142,7 +41,7 @@ export const createOrder = async (req, res) => {
         });
 
         await order.save();
-        await order.populate('menuItems.menuId', 'name price image menuCategory');
+        await order.populate('menuItems.menuId', 'name price category');
 
         const io = req.app.get("io");
         if (io) emitToAll(io, "order:new", order);
@@ -159,7 +58,7 @@ export const updateOrder = async (req, res) => {
         const { id } = req.params;
         const { menuItems, tableNumber, status } = req.body;
 
-        const order = await orderModel.findById(id).populate('menuItems.menuId', 'name price image menuCategory');
+        const order = await orderModel.findById(id).populate('menuItems.menuId', 'name price category');
         if (!order) return res.status(404).json({ success: false, message: "Order not found" });
         if (order.status === 'completed') return res.status(400).json({ success: false, message: "Cannot update completed order" });
 
@@ -213,7 +112,7 @@ export const updateOrder = async (req, res) => {
 
         const updatedOrder = await orderModel
             .findByIdAndUpdate(id, updateData, { new: true, runValidators: false })
-            .populate('menuItems.menuId', 'name price image menuCategory');
+            .populate('menuItems.menuId', 'name price category');
 
         const io = req.app.get("io");
         if (io) {
@@ -251,7 +150,7 @@ export const completeOrder = async (req, res) => {
         const { id } = req.params;
         const { completionDate } = req.body;
 
-        const order = await orderModel.findById(id).populate('menuItems.menuId', 'name price image menuCategory');
+        const order = await orderModel.findById(id).populate('menuItems.menuId', 'name price category');
         if (!order) return res.status(404).json({ success: false, message: "Order not found" });
         if (order.status === 'completed') return res.status(400).json({ success: false, message: "Order is already completed" });
         if (order.status === 'cancelled') return res.status(400).json({ success: false, message: "Cannot complete a cancelled order" });
@@ -288,7 +187,7 @@ export const completeOrder = async (req, res) => {
                 deleteAt: deleteTime
             },
             { new: true, runValidators: false }
-        ).populate('menuItems.menuId', 'name price image menuCategory');
+        ).populate('menuItems.menuId', 'name price category');
 
         await revenueModel.findOneAndUpdate(
             { date: revenueDate },
@@ -298,7 +197,7 @@ export const completeOrder = async (req, res) => {
 
         const categoryRevenues = {};
         for (const item of order.menuItems) {
-            const category = item.menuId?.menuCategory || item.category || 'uncategorized';
+            const category = item.menuId?.category || item.category || 'uncategorized';
             const itemPrice = item.menuId?.price || item.price || 0;
             const itemRevenue = itemPrice * item.quantity;
             if (!categoryRevenues[category]) categoryRevenues[category] = { revenue: 0, quantity: 0 };
@@ -346,7 +245,7 @@ export const cancelOrder = async (req, res) => {
         const { id } = req.params;
         const { reason } = req.body;
 
-        const order = await orderModel.findById(id).populate('menuItems.menuId', 'name price image menuCategory');
+        const order = await orderModel.findById(id).populate('menuItems.menuId', 'name price category');
         if (!order) return res.status(404).json({ success: false, message: "Order not found" });
         if (order.status === 'completed') return res.status(400).json({ success: false, message: "Cannot cancel completed order" });
         if (order.status === 'cancelled') return res.status(400).json({ success: false, message: "Order is already cancelled" });
@@ -362,7 +261,7 @@ export const cancelOrder = async (req, res) => {
                 cancelledBy: getAdminId(req)
             },
             { new: true, runValidators: false }
-        ).populate('menuItems.menuId', 'name price image menuCategory');
+        ).populate('menuItems.menuId', 'name price category');
 
         const io = req.app.get("io");
         if (io) {
@@ -410,7 +309,7 @@ export const acknowledgeOrderUpdate = async (req, res) => {
             id,
             { updatedItems: [], newItems: [], removedItems: [], lastUpdatedAt: null },
             { new: true, runValidators: false }
-        ).populate('menuItems.menuId', 'name price image menuCategory');
+        ).populate('menuItems.menuId', 'name price category');
 
         const io = req.app.get("io");
         if (io) {
@@ -439,7 +338,7 @@ export const getCurrentOrders = async (req, res) => {
 
         const orders = await orderModel
             .find(filter)
-            .populate('menuItems.menuId', 'name price image menuCategory')
+            .populate('menuItems.menuId', 'name price category')
             .sort({ createdAt: -1 });
 
         return res.status(200).json({
@@ -463,7 +362,7 @@ export const getOrdersByTables = async (req, res) => {
         let filter = { tableNumber: { $in: tableNumbers } };
         if (status && status !== 'all') filter.status = status;
 
-        const orders = await orderModel.find(filter).populate('menuItems.menuId', 'name price image menuCategory').sort({ createdAt: -1 });
+        const orders = await orderModel.find(filter).populate('menuItems.menuId', 'name price category').sort({ createdAt: -1 });
         return res.status(200).json({
             success: true, count: orders.length, searchedTables: tableNumbers,
             orders: orders.map(o => ({ ...o.toObject(), tableDisplayText: formatTableDisplay(o.tableNumber) }))
@@ -484,7 +383,7 @@ export const getOrdersByCombinedTables = async (req, res) => {
         let filter = { tableNumber: { $all: tableNumbers } };
         if (status && status !== 'all') filter.status = status;
 
-        const orders = await orderModel.find(filter).populate('menuItems.menuId', 'name price image menuCategory').sort({ createdAt: -1 });
+        const orders = await orderModel.find(filter).populate('menuItems.menuId', 'name price category').sort({ createdAt: -1 });
         return res.status(200).json({
             success: true, count: orders.length, combinedTables: tableNumbers,
             orders: orders.map(o => ({ ...o.toObject(), tableDisplayText: formatTableDisplay(o.tableNumber) }))
@@ -505,7 +404,7 @@ export const getOrdersByExactTables = async (req, res) => {
         let filter = { tableNumber: tableNumbers };
         if (status && status !== 'all') filter.status = status;
 
-        const orders = await orderModel.find(filter).populate('menuItems.menuId', 'name price image menuCategory').sort({ createdAt: -1 });
+        const orders = await orderModel.find(filter).populate('menuItems.menuId', 'name price category').sort({ createdAt: -1 });
         return res.status(200).json({
             success: true, count: orders.length, exactTables: tableNumbers,
             orders: orders.map(o => ({ ...o.toObject(), tableDisplayText: formatTableDisplay(o.tableNumber) }))
@@ -518,7 +417,7 @@ export const getOrdersByExactTables = async (req, res) => {
 export const getOrderById = async (req, res) => {
     try {
         const { id } = req.params;
-        const order = await orderModel.findById(id).populate('menuItems.menuId', 'name price image menuCategory');
+        const order = await orderModel.findById(id).populate('menuItems.menuId', 'name price category');
         if (!order) return res.status(404).json({ success: false, message: "Order not found" });
         return res.status(200).json({
             success: true,
@@ -558,7 +457,7 @@ export const getAllOrders = async (req, res) => {
         }
         const skip = (parseInt(page) - 1) * parseInt(limit);
         const [orders, total] = await Promise.all([
-            orderModel.find(filter).populate('menuItems.menuId', 'name price image menuCategory').sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)),
+            orderModel.find(filter).populate('menuItems.menuId', 'name price category').sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)),
             orderModel.countDocuments(filter)
         ]);
         return res.status(200).json({
@@ -712,72 +611,5 @@ export const getRevenueByCategory = async (req, res) => {
         });
     } catch (error) {
         return res.status(500).json({ success: false, message: "Failed to fetch revenue by category" });
-    }
-};
-
-export const debugMenuCategories = async (req, res) => {
-    try {
-        const menus = await menuModel.find({}, "name menuCategory");
-        return res.status(200).json({
-            success: true, count: menus.length,
-            menus: menus.map(m => ({ id: m._id, name: m.name, menuCategory: m.menuCategory || 'NOT SET' }))
-        });
-    } catch (error) {
-        return res.status(500).json({ success: false, message: "Debug failed" });
-    }
-};
-
-export const backfillOrderCategories = async (req, res) => {
-    try {
-        const orders = await orderModel.find({ status: 'completed' });
-        let updatedCount = 0, categoryFixed = 0, completedAtFixed = 0;
-        const errors = [];
-
-        for (const order of orders) {
-            try {
-                await order.populate("menuItems.menuId", "menuCategory name");
-                let changed = false;
-                if (!order.completedAt) { order.completedAt = order.updatedAt || order.createdAt; completedAtFixed++; changed = true; }
-                for (const mi of order.menuItems) {
-                    const newCategory = mi.menuId?.menuCategory || "uncategorized";
-                    if ((!mi.category || mi.category === 'uncategorized') && mi.menuId?.menuCategory && mi.menuId.menuCategory !== 'uncategorized') {
-                        mi.category = newCategory; categoryFixed++; changed = true;
-                    }
-                }
-                if (changed) { await order.save(); updatedCount++; }
-            } catch (err) { errors.push({ orderId: order._id, error: err.message }); }
-        }
-
-        return res.status(200).json({
-            success: true, message: "Backfill complete",
-            totalProcessed: orders.length, ordersUpdated: updatedCount,
-            categoriesFixed: categoryFixed, completedAtFixed: completedAtFixed,
-            errors: errors.length > 0 ? errors : undefined
-        });
-    } catch (error) {
-        return res.status(500).json({ success: false, message: "Backfill failed", error: error.message });
-    }
-};
-
-export const debugTodayOrders = async (req, res) => {
-    try {
-        const { date } = req.query;
-        let targetDate = date ? new Date(date + 'T00:00:00') : new Date();
-        if (!date) targetDate.setHours(0, 0, 0, 0);
-        const nextDate = new Date(targetDate); nextDate.setDate(nextDate.getDate() + 1);
-
-        const orders = await orderModel.find({
-            status: 'completed', completedAt: { $gte: targetDate, $lt: nextDate }
-        }).select('menuItems completedAt status tableNumber');
-
-        return res.status(200).json({
-            success: true, targetDate, nextDate, orderCount: orders.length,
-            orders: orders.map(o => ({
-                id: o._id, tableNumber: o.tableNumber, completedAt: o.completedAt,
-                menuItems: o.menuItems.map(mi => ({ name: mi.name, category: mi.category || 'MISSING!', price: mi.price, quantity: mi.quantity }))
-            }))
-        });
-    } catch (error) {
-        return res.status(500).json({ success: false, error: error.message });
     }
 };

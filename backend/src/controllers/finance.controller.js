@@ -1213,7 +1213,7 @@ export const getFinanceRangeSummary = async (req, res) => {
 // Metadata + default categories
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_FINANCE_CATEGORIES = [
+const DEFAULT_FINANCE_CATEGORIES = [
     // Business expenses
     { name: "Gas", kind: "expense" },
     { name: "Vegetable", kind: "expense" },

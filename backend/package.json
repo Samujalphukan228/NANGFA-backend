@@ -1,7 +1,7 @@
 {
   "name": "nangfa-ethnic-restaurant",
   "version": "1.0.0",
-  "description": "A order management system",
+  "description": "Order management system for the NANGFA restaurant",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -14,23 +14,17 @@
   "author": "Samujal Phukan",
   "license": "ISC",
   "dependencies": {
-    "@getbrevo/brevo": "^3.0.1",
     "argon2": "^0.44.0",
-    "bcryptjs": "^3.0.3",
-    "cloudinary": "^2.8.0",
-    "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
-    "express-mongo-sanitize": "^2.2.0",
     "express-rate-limit": "^8.2.1",
-    "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.20.0",
-    "multer": "^2.0.2",
-    "nodemailer": "^6.9.10",
-    "otp-generator": "^4.0.1",
     "socket.io": "^4.8.1",
     "validator": "^13.15.23"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
   }
 }

@@ -1,12 +1,8 @@
 import express from "express";
-import dotenv from "dotenv";
 import cors from "cors";
 import http from "http";
 import mongoose from "mongoose";
 import { setupSocket } from "./src/utils/socket.utils.js";
-
-dotenv.config();
-
 import env from "./src/utils/env.js";
 
 import adminRouter from "./src/routers/admin.routes.js";
@@ -20,9 +16,11 @@ import financeRouter from "./src/routers/finance.routes.js";
 
 const app = express();
 
+// Auth uses the Authorization header (bearer token), not cookies, so
+// credentials are not needed. This keeps `origin: "*"` valid per the CORS spec.
 app.use(cors({
     origin: "*",
-    credentials: true,
+    credentials: false,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"]
 }));
@@ -30,7 +28,9 @@ app.use(cors({
 app.use(express.json());
 
 app.use((req, res, next) => {
-    console.log(`${req.method} ${req.url}`);
+    if (process.env.NODE_ENV !== "production") {
+        console.log(`${req.method} ${req.url}`);
+    }
     next();
 });
 
@@ -55,72 +55,6 @@ app.use("/api/admin/calls", adminCallRouter);
 app.use("/api/waiter", waiterRouter);
 app.use("/api/finance", financeRouter);
 
-// ✅ DEBUG ROUTE - See all connected sockets and rooms
-app.get("/api/debug/rooms", (req, res) => {
-    const io = req.app.get("io");
-
-    if (!io) {
-        return res.status(500).json({
-            success: false,
-            message: "Socket.io not initialized"
-        });
-    }
-
-    const roomDetails = {};
-    io.sockets.adapter.rooms.forEach((sockets, roomName) => {
-        roomDetails[roomName] = {
-            size: sockets.size,
-            members: Array.from(sockets)
-        };
-    });
-
-    const connectedSockets = [];
-    io.sockets.sockets.forEach((socket, id) => {
-        connectedSockets.push({
-            id,
-            email: socket.user?.email,
-            role: socket.user?.role,
-            type: socket.user?.type,
-            rooms: Array.from(socket.rooms)
-        });
-    });
-
-    res.json({
-        success: true,
-        totalConnected: io.sockets.sockets.size,
-        rooms: roomDetails,
-        sockets: connectedSockets,
-        timestamp: new Date().toISOString()
-    });
-});
-
-// ✅ DEBUG SOCKET STATUS
-app.get("/api/debug/socket-status", (req, res) => {
-    const io = req.app.get("io");
-    const rooms = {};
-
-    io.sockets.adapter.rooms.forEach((sockets, roomName) => {
-        if (
-            roomName === "kitchen" ||
-            roomName === "admin" ||
-            roomName.startsWith("role:") ||
-            roomName.startsWith("table:")
-        ) {
-            rooms[roomName] = {
-                memberCount: sockets.size,
-                members: Array.from(sockets),
-            };
-        }
-    });
-
-    res.json({
-        success: true,
-        timestamp: new Date().toISOString(),
-        connectedSockets: io.sockets.sockets.size,
-        rooms,
-    });
-});
-
 // 404 handler
 app.use((req, res) => {
     res.status(404).json({
@@ -140,8 +74,6 @@ app.use((err, req, res, next) => {
 
 const server = http.createServer(app);
 const port = process.env.PORT || 5000;
-
-console.log('🔍 PORT DEBUG: process.env.PORT =', process.env.PORT, '| Using port =', port);
 
 // Setup Socket.io
 const io = setupSocket(server);
@@ -226,7 +158,6 @@ mongoose
             console.log(`🚀 NANGFA Backend Server Started`);
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
             console.log(`📡 Listening on:   0.0.0.0:${port}`);
-            console.log(`🌍 Public URL:     https://nangfa-backend-6ics.onrender.com`);
             console.log(`🗄️  Database:       Connected`);
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
         });
